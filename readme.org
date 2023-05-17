@@ -1,0 +1,42 @@
+* 1Password.el
+This is an alpha implementation of integration with the 1Password CLI.
+** Setup
+- make sure you have 1Password CLI installed
+- 
+** Features
+- [X] auth-source integration for searching by title or id
+- [-] Interactive commands based on `op items` commands
+  - [X] op item list
+  - [X] op item get password
+  - [ ] op item create
+  - [ ] op item delete
+  - [ ] op item share
+** Auth Source
+It's important to remember that auth-source's default behaviour is to cache items for 7200 seconds. So, if you don't like your secrets sticking around in memory set ~auth-source-do-source~ to nil or ~auth-source-cache-expiry~ to a lower threshold.
+
+#+begin_src elisp
+(use-package 1password
+ :elpaca  (1password :host github :repo "justinbarclay/1password.el" :branch "main")
+ :init
+ (1password-enable-auth-source))
+#+end_src
+
+This will add a new auth-source backend ~1password~ that let's you query for things normally:
+#+begin_src elisp :results code
+ (auth-source-search :host "api.github.com")
+#+end_src
+
+#+RESULTS:
+#+begin_src elisp
+(:backend 1password :host "api.github.com" :username "githubapi@github.com" :secret "JMH73PktuQK4eCPAvPvc")
+#+end_src
+
+Or if you want to query only from 1Password
+#+begin_src elisp :results code
+ (auth-source-search :type '1password :host "api.github.com")
+#+end_src
+
+#+RESULTS:
+#+begin_src elisp
+(:backend 1password :host "api.github.com" :username "githubapi@justinbarclay.ca" :secret "JMH73PktuQK4eCPAvPvc")
+#+end_src
