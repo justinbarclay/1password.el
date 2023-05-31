@@ -1,4 +1,4 @@
-;;; 1password.el --- Emacs ❤️ 1Password -*- lexical-binding: t; -*-
+;;; 1password.el --- Emacs ❤️ 1Password -*- lexical-binding: t; -*q-
 
 ;; Copyright (C) 2023  Justin Barclay
 
@@ -45,6 +45,7 @@
   :group '1password)
 
 (defvar 1password--item-cache nil "A cache for 1Password's `item list' command")
+(defvar 1password--template-file "op-template.json" "The name of the template file used to create new items")
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Helper methods
@@ -62,10 +63,24 @@
       (goto-char (point-min))
       (eval (list buffer-reader-fn)))))
 
-(cl-defun 1password--query-builder (&key id-or-name
+;; Retrieve a shareable link for the item referenced by ID:
+;;
+;;         op item get kiramv6tpjijkuci7fig4lndta --vault "Ops Secrets" --share-link
+;;
+;; Flags:
+;;       --fields fields     Only return data from these fields. Use 'label=' to get the field by name or 'type=' to filter fields by type.
+;;   -h, --help              Get help with item get.
+;;       --include-archive   Include items in the Archive. Can also be set using OP_INCLUDE_ARCHIVE environment variable.
+;;       --otp               Output the primary one-time password for this item.
+;;       --share-link        Get a shareable link for the item.
+;;       --vault vault       Look for the item in this vault.
+;;
+;; TODO Refactor
+(cl-defun 1password--get-query-builder (&key id-or-name
                                          (field-keys '(username password))
                                          vault
                                          &allow-other-keys)
+  "Builds a query for 1Password's `get item' command"
   (let ((fields (mapconcat #'symbol-name field-keys ",")))
     (string-join (append (list "item"
                                "get"
@@ -79,14 +94,16 @@
 ;; 1Password Auth Source
 ;;;;;;;;;;;;;;;;;;;;;;;;;
 (cl-defun 1password--search (&rest args &key id-or-name field-keys vault)
-  "Search function for use with 1Password"
+  "Search function for use with 1Password's auth source integration"
   (condition-case json-error
-      (thread-first (apply #'1password--query-builder args)
+      (thread-first (apply #'1password--get-query-builder args)
                     1password--execute-in-buffer
                     1password--get-to-plist)
+    ;; If we get an error, we can try to parse the buffer for ids
+    ;; and ask the user for the right entry
     (error (if-let* ((ids (1password--parse-buffer-for-ids))
                      (id (1password--search-id ids)))
-               (thread-first (apply #'1password--query-builder :id-or-name id :field-keys field-keys :vault vault)
+               (thread-first (apply #'1password--get-query-builder :id-or-name id :field-keys field-keys :vault vault)
                              1password--execute-in-buffer
                              1password--get-to-plist)
              json-error))))
@@ -156,6 +173,7 @@ You can use `1password-search-id' to find the id for of an entry."
 ;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; 1Password Item
 ;;;;;;;;;;;;;;;;;;;;;;;;;
+
 (defun 1password--get-to-plist (json)
   "Extracts the label and value from each object and returns a
   simple plist
@@ -194,11 +212,38 @@ You can use `1password-search-id' to find the id for of an entry."
            (gethash "value" response)))
    json))
 
+;; Get a CSV list of the username, and password for all logins in a vault:
+;;
+;;   op item list --categories Login --vault Staging --format=json
+;;
+;; Selecting a tag '<tag>' will also return items with tags sub-nested to '<tag>'. For example: '<tag/subtag>'.
+;;
+;; Flags:
+;;       --categories categories   Only list items in these categories (comma-separated).
+;;       --favorite                Only list favorite items
+;;   -h, --help                    Get help with item list.
+;;       --include-archive         Include items in the Archive. Can also be set using OP_INCLUDE_ARCHIVE environment variable.
+;;       --long                    Output a more detailed item list.
+;;       --tags tags               Only list items with these tags (comma-separated).
+;;       --vault vault             Only list items in this vault.
 (defun 1password--item-list ()
+  "Returns a list of all items in 1Password"
   (thread-first (string-join
                  '("item"
                    "list"
-                   "--format"  "json")
+                   "--format" "json")
+                 " ")
+                1password--execute-in-buffer))
+
+;; TODO not working
+(defun 1password--item-create (title &optional vault dry-runp)
+  (thread-first (string-join
+                 (append
+                  (list "item"
+                        "create"
+                        "--title" title
+                        "--format" "json")
+                  (when dry-runp (list "--dry-run" "--category login")))
                  " ")
                 1password--execute-in-buffer))
 
@@ -212,6 +257,7 @@ from the 1Password CLI."
     (setq 1password--item-cache (1password--item-list))))
 
 (defun 1password--search-id (&optional ids)
+  "Searches the cached list of 1Password entries for the ID of `entry'"
   (let* ((candidates (1password--format-list
                       (1password--cached-item-list)))
          (response (completing-read "1Password title: "
@@ -227,16 +273,28 @@ from the 1Password CLI."
   (mapcar
    (lambda (response)
      (list
-      (format "%s\t(%s)" (gethash "title" response) (gethash "additional_information" response))
+      (format "%s\t\t(%s)\t\t%s"
+              (gethash "title" response)
+              (gethash "additional_information" response)
+              (gethash "name"
+                       (gethash "vault" response)))
       (gethash "id" response)))
    results))
 ;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; 1Password Read
 ;;;;;;;;;;;;;;;;;;;;;;;;;
-(defun 1password--read-to-string ()
-  "")
 
+;; Get a database password, stored in vault 'app-prod' in item 'db' at field 'password':
+;;
+;;         op read op://app-prod/db/password
+;; Flags:
+;;       --file-mode filemode   Set filemode for the output file. It is ignored without the --out-file flag. (default 0600)
+;;   -f, --force                Do not prompt for confirmation.
+;;   -h, --help                 Get help with read.
+;;   -n, --no-newline           Do not print a new line after the secret.
+;;   -o, --out-file string      Write the secret to a file instead of stdout.
 (cl-defun 1password--read (&rest spec &key vault entry-id field)
+  "Read a field from a 1Password entry using the entries vaults and id"
   (let ((args (string-join (list
                             "read op:/"
                             vault
@@ -244,6 +302,32 @@ from the 1Password CLI."
                             field)
                            "/")))
     (1password--execute-in-buffer args 'buffer-string)))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Delete Commands
+;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; Move an item to the Archive:
+;;
+;;     op item delete "Defunct Login" --archive
+;;
+;; Flags:
+;;       --archive        Move the item to the Archive.
+;;   -h, --help           Get help with item delete.
+;;       --vault string   Look for the item in this vault.
+(cl-defun 1password--delete (&rest spec &key entry-id vault)
+  "Delete a 1Password entry using the entries vaults and id"
+  (let* ((args (string-join (list
+                            "item"
+                            "delete"
+                            entry-id
+                            "--archive"
+                            (when vault (format "--vault %s" vault)))
+                           " "))
+         (result (1password--execute-in-buffer args 'buffer-string)))
+    ;; Clear cache and return result
+    (setq 1password--item-cache nil)
+    result))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; User Commands
@@ -278,5 +362,16 @@ from the 1Password CLI."
     (kill-new (1password--read :vault vault :entry-id id :field "password"))
     (message "1Password secret copied to clipboard")))
 
+;; (defun 1password-generate-password ()
+;;   "Generates a random password using 1Password"
+;;   (interactive)
+;;   (let* ((response (1password--item-create "thing" nil 't)))
+;;     (password (gethash "password" response)))
+;;   (kill-new password)
+;;   (message "1Password generated password copied to clipboard"))
+
+;; Local Variables:
+;; read-symbol-shorthands: (("op-" . "1password-"))
+;; End:
 (provide '1password)
 ;;; 1password.el ends here
