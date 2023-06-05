@@ -45,14 +45,35 @@
   :group '1password)
 
 (defvar 1password--item-cache nil "A cache for 1Password's `item list' command")
-(defvar 1password--template-file "op-template.json" "The name of the template file used to create new items")
+(defvar 1password--template-file "op-template" "The name of the template file used to create new items")
+
+(defvar 1password--categories '("API Credential"
+                                "Bank Account"
+                                "Credit Card"
+                                "Database"  "Document"
+                                "Driver License"
+                                "Email Account"
+                                "Identity"
+                                "Login"
+                                "Membership"
+                                "Outdoor License"
+                                "Passport"
+                                "Password"
+                                "Reward Program"
+                                "Secure Note"
+                                "Server"
+                                "Software License"
+                                "Wireless Router"))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Helper methods
 ;;;;;;;;;;;;;;;;;;;;;;;;;
-(cl-defun 1password--execute-in-buffer (args &optional (buffer-reader-fn #'json-parse-buffer))
+
+(cl-defun 1password--execute-in-buffer (args &optional
+                                             (buffer-reader-fn #'json-parse-buffer)
+                                             (buffer-name "*1password*"))
   "Runs 1password executable with `args' and processes the JSON response"
-  (with-current-buffer (get-buffer-create "*1password*")
+  (with-current-buffer (get-buffer-create buffer-name)
     (let ((qualifed-executable (executable-find 1password-executable)))
       (unless qualifed-executable
         (error (format "Unable to find 1Password CLI '%s'" 1password-executable)))
@@ -77,9 +98,9 @@
 ;;
 ;; TODO Refactor
 (cl-defun 1password--get-query-builder (&key id-or-name
-                                         (field-keys '(username password))
-                                         vault
-                                         &allow-other-keys)
+                                             (field-keys '(username password))
+                                             vault
+                                             &allow-other-keys)
   "Builds a query for 1Password's `get item' command"
   (let ((fields (mapconcat #'symbol-name field-keys ",")))
     (string-join (append (list "item"
@@ -171,9 +192,94 @@ You can use `1password-search-id' to find the id for of an entry."
     (auth-source-backend-parse-parameters entry 1password-auth-source-backend)))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;
+;; 1Password Create
+;;;;;;;;;;;;;;;;;;;;;;;;;
+(cl-defun 1password--create-in-buffer (args &optional
+                                             (buffer-reader-fn #'json-parse-buffer)
+                                             template-buffer)
+  "Sends the contents of the current buffer to 1password to create an account"
+  (let ((qualifed-executable (executable-find 1password-executable))
+        (output-buffer (get-buffer-create "*1password*")))
+    (unless qualifed-executable
+      (error (format "Unable to find 1Password CLI '%s'" 1password-executable)))
+    (with-current-buffer output-buffer
+      (read-only-mode -1)
+      (erase-buffer))
+    (with-current-buffer template-buffer
+      (read-only-mode -1)
+      (apply #'call-process-region
+             (point-min)
+             (point-max)
+             qualifed-executable
+             't
+             output-buffer
+             nil
+             (split-string args " ")))
+    (with-current-buffer output-buffer
+      (special-mode)
+      (eval (list buffer-reader-fn)))))
+
+(cl-defun 1password--fetch-template (&optional (category "Login"))
+  "Adds the `op' template for the chosen category into `buffer'"
+  (let ((template-buffer (get-buffer-create "*1password-create*")))
+    (1password--execute-in-buffer (string-join (list
+                                                "item"
+                                                "template"
+                                                "get"
+                                                category
+                                                "--format"
+                                                "json")
+                                               " ")
+                                  'buffer-string
+                                  template-buffer)
+    template-buffer))
+
+(defun 1password--update-template-fields (fields)
+  (mapcar (lambda (field)
+            (let ((field-label (plist-get field :label)))
+              (when (and field-label
+                         (not (string= field-label "password")))
+                (plist-put field :value (read-string (format "%s: " field-label))))
+              field))
+          fields))
+
+(defun 1password--create (template-buffer)
+  (1password--create-in-buffer (string-join (list
+                                              "item"
+                                              "create"
+                                              "--generate-password=20,letters,digits")
+                                             " ")
+                                'buffer-string
+                                template-buffer))
+
+;; TODO: Add support for other categories
+(defun 1password-create (&optional dryrunp)
+  "Creates a new 1Password entry for the Login category.
+
+Note: This only supports auto-generated password with 20
+characters of Letters and Digits."
+  (interactive)
+  (let* ((template-buffer (1password--fetch-template))
+         (json-object-type 'plist)
+         (json-key-type 'symbol)
+         template)
+    (with-current-buffer template-buffer
+      (setq template (json-parse-buffer :object-type 'plist))
+      (plist-put template :title (read-string "Entry name: "))
+      (plist-put template :fields (apply 'vector (1password--update-template-fields (plist-get template :fields))))
+      (read-only-mode -1)
+      (erase-buffer)
+      (goto-char (point-min))
+      (json-insert template)
+      (read-only-mode 1)
+      (1password--create template-buffer))
+    (kill-buffer (get-buffer template-buffer))
+    (delete-file template-buffer)
+    template))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; 1Password Item
 ;;;;;;;;;;;;;;;;;;;;;;;;;
-
 (defun 1password--get-to-plist (json)
   "Extracts the label and value from each object and returns a
   simple plist
@@ -231,19 +337,8 @@ You can use `1password-search-id' to find the id for of an entry."
   (thread-first (string-join
                  '("item"
                    "list"
-                   "--format" "json")
-                 " ")
-                1password--execute-in-buffer))
-
-;; TODO not working
-(defun 1password--item-create (title &optional vault dry-runp)
-  (thread-first (string-join
-                 (append
-                  (list "item"
-                        "create"
-                        "--title" title
-                        "--format" "json")
-                  (when dry-runp (list "--dry-run" "--category login")))
+                   "--format"
+ "json")
                  " ")
                 1password--execute-in-buffer))
 
