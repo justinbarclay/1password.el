@@ -423,7 +423,6 @@ from the 1Password CLI."
     ;; Clear cache and return result
     (setq 1password--item-cache nil)
     result))
-
 ;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; User Commands
 ;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -457,6 +456,18 @@ from the 1Password CLI."
     (kill-new (1password--read :vault vault :entry-id id :field "password"))
     (message "1Password secret copied to clipboard")))
 
+;;;###autoload
+(defun 1password-delete ()
+  "Deletes the selected 1password entry"
+  (interactive)
+  (let* ((id (1password--search-id))
+        (vault (thread-last (cl-find id 1password--item-cache :test
+                                     (lambda (target item)
+                                       (eq (gethash "id" item) target)))
+                            (gethash "vault")
+                            (gethash "name"))))
+    (1password--delete :entry-id id :vault vault)
+    (message "1Password entry deleted")))
 ;; (defun 1password-generate-password ()
 ;;   "Generates a random password using 1Password"
 ;;   (interactive)
