@@ -250,7 +250,9 @@ You can use `1password-search-id' to find the id for of an entry."
                                               "--generate-password=20,letters,digits")
                                              " ")
                                 'buffer-string
-                                template-buffer))
+                                template-buffer)
+      ;; Clear cache and return result
+    (setq 1password--item-cache nil))
 
 ;; TODO: Add support for other categories
 (defun 1password-create (&optional dryrunp)
@@ -273,12 +275,37 @@ characters of Letters and Digits."
       (json-insert template)
       (read-only-mode 1)
       (1password--create template-buffer))
-    (kill-buffer (get-buffer template-buffer))
-    (delete-file template-buffer)
     template))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;
-;; 1Password Item
+;; 1Password Share
+;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; Usage:  op item share { <itemName> | <itemID> } [flags]
+;; Flags:
+;;       --emails strings    Email addresses to share with.
+;;       --expiry duration   Link expiring after the specified duration in (s)econds, (m)inutes, or (h)ours (default 7h).
+;;   -h, --help              Get help with item share.
+;;       --vault string      Look for the item in this vault.
+;;       --view-once         Expire link after a single view.
+(defun 1password--share (item-id email)
+  (let ((args (string-join
+               (list "item"
+                     "share"
+                     item-id
+                     "--emails" email)
+               " ")))
+    (1password--execute-in-buffer args)))
+
+;; TODO: Add support for custom categories
+;; TODO: Add support for more than 1 emails
+(defun 1password-share ()
+  (interactive)
+  (1password--share (1password--search-id)
+                    (read-string "Email: ")))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;
+;; 1Password Get
 ;;;;;;;;;;;;;;;;;;;;;;;;;
 (defun 1password--get-to-plist (json)
   "Extracts the label and value from each object and returns a
@@ -310,7 +337,6 @@ characters of Letters and Digits."
 
   (list :username \"githubapi@justinbarclay.ca\"
         :password \"JMH73PKTUQK4ECPAVPVC\")
-
   "
   (mapcan
    (lambda (response)
@@ -338,7 +364,7 @@ characters of Letters and Digits."
                  '("item"
                    "list"
                    "--format"
- "json")
+                   "json")
                  " ")
                 1password--execute-in-buffer))
 
@@ -468,6 +494,7 @@ from the 1Password CLI."
                             (gethash "name"))))
     (1password--delete :entry-id id :vault vault)
     (message "1Password entry deleted")))
+
 ;; (defun 1password-generate-password ()
 ;;   "Generates a random password using 1Password"
 ;;   (interactive)

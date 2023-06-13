@@ -2,15 +2,20 @@
 This is an alpha implementation of integration with the 1Password CLI.
 ** Setup
 - make sure you have 1Password CLI installed
-- 
+
 ** Features
 - [X] auth-source integration for searching by title or id
-- [-] Interactive commands based on `op items` commands
+- [X] Interactive commands based on `op items` commands
   - [X] op item list
   - [X] op item get password
-  - [ ] op item create
-  - [ ] op item delete
-  - [ ] op item share
+  - [X] op item create
+  - [X] op item delete
+  - [-] op item share
+- [ ] generate password command
+** Dev TODO
+- Switch to plist instead of hash
+- better handle situations where json module isn't guaranteed
+- make an async version execute in buffer
 ** Auth Source
 It's important to remember that auth-source's default behaviour is to cache items for 7200 seconds. So, if you don't like your secrets sticking around in memory set ~auth-source-do-source~ to nil or ~auth-source-cache-expiry~ to a lower threshold.
 
