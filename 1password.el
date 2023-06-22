@@ -179,7 +179,9 @@ host to be a unique name or use the 1Password ID for the item.
 You can use `1password-search-id' to find the id for of an entry."
   (thread-last (1password--search :id-or-name (or host id))
                (cl-substitute :secret :password)
-               (append (list :backend '1password :host host))))
+               (cl-substitute :login :username)
+               (append (list :backend '1password :host host :port nil))
+               (list)))
 
 (defvar 1password-auth-source-backend
   (auth-source-backend
@@ -299,8 +301,10 @@ characters of Letters and Digits."
 
 ;; TODO: Add support for custom categories
 ;; TODO: Add support for more than 1 emails
-(defun 1password-share ()
-  (interactive)
+(defun 1password-share (&optional num-hours)
+  "Shares the current 1Password entry with the given email address."
+  (interactive "p")
+  (message "%s hours" num-hours)
   (1password--share (1password--search-id)
                     (read-string "Email: ")))
 
