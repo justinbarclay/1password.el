@@ -347,7 +347,7 @@ This link will be valid for 7Hours."
 ;; TODO: Add support for more than 1 emails
 (defun 1password-share ()
   "Shares the selected 1Password entry to the specified entry."
-  (interactive "p")
+  (interactive)
   (1password--share (1password--search-id)
                     (read-string "Email: ")))
 
