@@ -142,14 +142,14 @@ item if a match is found.  If any matches are found
   (condition-case json-error
       (thread-first (apply #'1password--get-query-builder args)
                     1password--execute-in-buffer
-                    1password--get-to-plist)
+                    1password--extract-data)
     ;; If we get an error, we can try to parse the buffer for ids
     ;; and ask the user for the right entry
     (error (if-let* ((ids (1password--parse-buffer-for-ids))
                      (id (1password--search-id ids)))
                (thread-first (apply #'1password--get-query-builder :id-or-name id :field-keys field-keys :vault vault)
                              1password--execute-in-buffer
-                             1password--get-to-plist)
+                             1password--extract-data)
              json-error))))
 
 (defun 1password--parse-buffer-for-ids ()
@@ -270,10 +270,12 @@ You can use `1password-search-id' to find the id for of an entry."
 (defun 1password--update-template-fields (fields)
   "Update the `FIELDS' in the buffer with user supplied values."
   (mapcar (lambda (field)
-            (let ((field-label (plist-get field :label)))
+            (let ((field-label (gethash "label" field)))
               (when (and field-label
                          (not (string= field-label "password")))
-                (plist-put field :value (read-string (format "%s: " field-label))))
+                (puthash "value"
+                         (read-string (format "%s: " field-label))
+                         field))
               field))
           fields))
 
@@ -301,13 +303,15 @@ Note: This only supports auto-generated password with 20
 characters of Letters and Digits."
   (interactive)
   (let* ((template-buffer (1password--fetch-template))
-         (json-object-type 'plist)
-         (json-key-type 'symbol)
          template)
     (with-current-buffer template-buffer
-      (setq template (json-parse-buffer :object-type 'plist))
-      (plist-put template :title (read-string "Entry name: "))
-      (plist-put template :fields (apply 'vector (1password--update-template-fields (plist-get template :fields))))
+      (setq template (json-parse-buffer))
+      (puthash "title" (read-string "Entry name: ") template)
+      (puthash "fields"
+               (apply 'vector
+                      (1password--update-template-fields
+                       (gethash "fields" template)))
+               template)
       (read-only-mode -1)
       (erase-buffer)
       (goto-char (point-min))
@@ -350,7 +354,7 @@ This link will be valid for 7Hours."
 ;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; 1Password Get
 ;;;;;;;;;;;;;;;;;;;;;;;;;
-(defun 1password--get-to-plist (json)
+(defun 1password--extract-data (json)
   "Extract the label and value from each entry in `JSON'.
 
   1Password returns an array of json objects that contain alot of
@@ -378,7 +382,10 @@ This link will be valid for 7Hours."
   and `value'
 
   (list :username \"githubapi@justinbarclay.ca\"
-        :password \"JMH73PKTUQK4ECPAVPVC\")"
+        :password \"JMH73PKTUQK4ECPAVPVC\")
+
+  In reality, we use a hash table to store the data, but it's
+  easier to visualize a plist."
   (mapcan
    (lambda (response)
      (list (intern (concat ":" (gethash "label" response)))
@@ -442,6 +449,7 @@ from the 1Password CLI."
                        (gethash "vault" response)))
       (gethash "id" response)))
    results))
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; 1Password Read
 ;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -496,6 +504,7 @@ from the 1Password CLI."
     ;; Clear cache and return result
     (setq 1password--item-cache nil)
     result))
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; User Commands
 ;;;;;;;;;;;;;;;;;;;;;;;;;
