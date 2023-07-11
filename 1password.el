@@ -46,7 +46,7 @@
   :options '("op" "op.exe")
   :group '1password)
 
-(defcustom 1password-results-formatter '1password--default-formatter
+(defcustom 1password-results-formatter '1password-default-formatter
   "The function used to format the results for minibuffer completion."
   :type '(function)
   :group '1password)
