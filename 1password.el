@@ -46,7 +46,28 @@
   :options '("op" "op.exe")
   :group '1password)
 
+(defcustom 1password--results-formatter '1password--default-formatter
+  "The function used to format the results for minibuffer completion."
+  :type '(function)
+  :group '1password)
+
+(defgroup 1Password-faces nil
+  "Faces used by `1Password'."
+  :group '1Password
+  :group 'faces)
+
+(defface 1password--title-face '((t :inherit default))
+  "Face to use for the title of the 1Password entry.")
+
+(defface 1password--additional-information-face '((t :inherit font-lock-warning-face))
+  "Face to use for the additional information of the 1Password entry.")
+
+(defface 1password--vault-name-face '((t :inherit font-lock-comment-face))
+  "Face for the vault name when for the 1Password entry.")
+
+
 (defvar 1password--item-cache nil "A cache for 1Password's `item list' command.")
+
 (defvar 1password--template-file "op-template" "The name of the template file used to create new items.")
 
 (defvar 1password--categories '("API Credential"
@@ -427,8 +448,8 @@ from the 1Password CLI."
 
 (defun 1password--search-id (&optional ids)
   "Search a cached list of 1Password entries for entries with `IDS'."
-  (let* ((candidates (1password--format-list
-                      (1password--cached-item-list)))
+  (let* ((candidates (apply 1password--results-formatter
+                            (list (1password--cached-item-list))))
          (response (completing-read "1Password title: "
                                     candidates
                                     (when ids
@@ -437,16 +458,100 @@ from the 1Password CLI."
                                     't)))
     (cadr (assoc response candidates))))
 
-(defun 1password--format-list (results)
+;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Candidate Formatting
+;;;;;;;;;;;;;;;;;;;;;;;;;
+(defun 1password--nested-get (fields candidate &optional dflt)
+  (if (stringp fields)
+      (gethash fields candidate)
+    (or (cl-reduce (lambda (field field-name)
+                  (and
+                   field
+                   (gethash field-name field nil)))
+                fields
+                :initial-value candidate)
+        dflt)))
+
+(defun 1password--nested-put-helper (fields value candidate)
+  (if (= (length fields) 1)
+      (progn
+        (puthash (car fields) value candidate)
+        candidate)
+    (let ((field (or (gethash (car fields) candidate)
+                     (make-hash-table :test 'equal))))
+      (puthash (car fields)
+               (1password--nested-put-helper (cdr fields)
+                                             value
+                                             field)
+               candidate)
+      candidate)))
+
+(defun 1password--nested-put (fields value candidate)
+  (if (stringp fields)
+      (progn
+        (puthash fields value candidate)
+        candidate)
+    (1password--nested-put-helper fields
+                                  value
+                                  candidate)))
+
+(defun 1password--max-candidate-lengths (candidates fields)
+  "Return a hash-table of the max length of each `FIELDS' in `CANDIDATES'.
+  - `CANDIDATES' is a hash
+  - `FIELDS' is a list of fields to check for the max length"
+  (cl-reduce (lambda (acc candidate)
+               (dolist (field fields)
+                 (if (listp field)
+                     (1password--nested-put field
+                                            (max
+                                             (1password--nested-get field acc 0)
+                                             (length (1password--nested-get field candidate "")))
+                                            acc)
+                   (puthash field
+                            (max
+                             (gethash field acc 0)
+                             (length (gethash field candidate "")))
+                            acc)))
+               acc)
+             candidates
+             :initial-value (make-hash-table :test 'equal :size (length fields))))
+
+(defun 1password-colour-formatter (results)
+  "Format the cached `RESULTS' from 1Password for Minibuffer Completion."
+  (let* ((fields '("title" "additional_information" ("vault" "name")))
+         (spacings (1password--max-candidate-lengths results fields)))
+    (mapcar (lambda (candidate)
+              (list
+               (string-join
+                (cl-mapcar
+                 (lambda (field)
+                   (let* ((format-string (string-join
+                                          (list "%-"
+                                                (number-to-string (gethash field spacings 0))
+                                                "s")))
+                          (formatted-string (format format-string
+                                                    (1password--nested-get field candidate ""))))
+                     (propertize formatted-string
+                                 'face (cond
+                                        ((and (listp field)
+                                              (equal field '("vault" "name")))
+                                         '1password--vault-name-face)
+                                        ((string= field "title") '1password--title-face)
+                                        ((string= field "additional_information") '1password--additional-information-face)
+                                        (t 'default)))))
+                 fields)
+                " ")
+               (gethash "id" candidate)))
+            results)))
+
+(setq 1password--results-formatter '1password-colour-formatter)
+
+(defun 1password-default-formatter (results)
   "Format the cached `RESULTS' from 1Password for Minibuffer Completion."
   (mapcar
    (lambda (response)
      (list
-      (format "%s - (%s) - %s"
-              (gethash "title" response)
-              (gethash "additional_information" response)
-              (gethash "name"
-                       (gethash "vault" response)))
+      (gethash "title" response)
       (gethash "id" response)))
    results))
 
@@ -491,8 +596,8 @@ from the 1Password CLI."
 (cl-defun 1password--delete (&rest spec &key entry-id vault)
   "Delete a 1Password entry that matches `SPEC'.
 
-- `VAULT' is the vault where the entry is stored
-- `ENTRY-ID' is the id of the entry"
+  - `VAULT' is the vault where the entry is stored
+  - `ENTRY-ID' is the id of the entry"
   (let* ((args (string-join (list
                             "item"
                             "delete"
