@@ -1,12 +1,12 @@
-;;; 1password.el --- Emacs ❤️ 1Password -*- lexical-binding: t; -*q-
+;;; 1password.el --- Emacs ❤️ 1Password -*- lexical-binding: t; -*-
 
 ;; Copyright (C) 2023  Justin Barclay
 
 ;; Author: Justin Barclay <emacs@justinbarclay.ca>
 ;; URL: https://github.com/justinbarclay/1password.el
 ;; Version: 0.1.0
-;; Package-Requires: ((emacs "28.2"))
-;; Keywords: processes
+;; Package-Requires: ((emacs "28.2") (aio "1.0"))
+;; Keywords: processes, convenience
 
 ;; This program is free software: you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published by
@@ -33,6 +33,7 @@
 (require 'subr-x)
 (require 'json)
 (require 'cl-lib)
+(require 'aio)
 
 (defgroup 1password nil
   "1Password integration for Emacs."
@@ -91,7 +92,6 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Helper methods
 ;;;;;;;;;;;;;;;;;;;;;;;;;
-
 (cl-defun 1password--execute-in-buffer (args &optional
                                              (buffer-reader-fn #'json-parse-buffer)
                                              (buffer-name "*1password*"))
@@ -114,14 +114,36 @@ output of the call to the 1Password CLI.  By default, this is
       (goto-char (point-min))
       (eval (list buffer-reader-fn)))))
 
-;; (with-current-buffer (get-buffer-create "*1password1*")
-;;   (erase-buffer)
-;;   (make-process :name "1password"
-;;                 :buffer "*1password1*"
-;;                 :command (list 1password-executable "item" "list" "--format" "json")
-;;                 :sentinel (lambda (process event)
-;;                             (message "1Password process %s: %s" process event))))
+(cl-defun 1password--execute-in-buffer-async (args
+                                              &optional
+                                              (buffer-reader-fn #'json-parse-buffer)
+                                              (buffer-name "*1password*"))
+  "Run the 1password executable with `ARGS' and return a promise.
 
+`BUFFER-READER-FN' is a function that will be used to process the
+output of the call to the 1Password CLI.  By default, this is
+`json-parse-buffer'.
+
+`BUFFER-NAME' is the name of the buffer that will house the
+1Password process and that 1Password will dump its output too"
+  (with-current-buffer (get-buffer-create buffer-name)
+    (let* ((qualifed-executable (executable-find 1password-executable))
+           (promise (aio-promise))
+           (sentinel-fn (lambda (process event)
+                          (let ((data (with-current-buffer (process-buffer process)
+                                                   (special-mode)
+                                                   (goto-char (point-min))
+                                                   (funcall buffer-reader-fn))))
+                            (aio-resolve promise (lambda () data))))))
+      (unless qualifed-executable
+        (error (format "Unable to find 1Password CLI '%s'" 1password-executable)))
+      (read-only-mode -1)
+      (erase-buffer)
+      (make-process :name "1password"
+                    :buffer buffer-name
+                    :command (cons 1password-executable (split-string args " "))
+                    :sentinel sentinel-fn)
+      promise)))
 
 ;; Retrieve a shareable link for the item referenced by ID:
 ;;
@@ -154,6 +176,14 @@ and return from the entry that matches `ID-OR-NAME'.
                          (when field-keys (list "--fields" fields))
                          (when vault (list "--vault" vault)))
                  " ")))
+
+(defun 1password--find-vault (id)
+  "Search `1password--item-cache' for the vault name of the entry with `ID'."
+  (thread-last (cl-find id 1password--item-cache :test
+                        (lambda (target item)
+                          (eq (gethash "id" item) target)))
+               (gethash "vault")
+               (gethash "name")))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; 1Password Auth Source
@@ -282,19 +312,20 @@ You can use `1password-search-id' to find the id for of an entry."
       (special-mode)
       (eval (list buffer-reader-fn)))))
 
-(cl-defun 1password--fetch-template (&optional (category "Login"))
+(aio-defun 1password--fetch-template (category)
   "Fetches the `op' template for the chosen `CATEGORY'."
   (let ((template-buffer (get-buffer-create "*1password-create*")))
-    (1password--execute-in-buffer (string-join (list
-                                                "item"
-                                                "template"
-                                                "get"
-                                                category
-                                                "--format"
-                                                "json")
-                                               " ")
-                                  'buffer-string
-                                  template-buffer)
+    (aio-await (1password--execute-in-buffer-async
+                (string-join (list
+                              "item"
+                              "template"
+                              "get"
+                              category
+                              "--format"
+                              "json")
+                             " ")
+                'buffer-string
+                template-buffer))
     template-buffer))
 
 (defun 1password--update-template-fields (fields)
@@ -309,32 +340,24 @@ You can use `1password-search-id' to find the id for of an entry."
               field))
           fields))
 
-(defun 1password--create (template-buffer)
-  "Create a new 1Password entry using the template stored in `TEMPLATE-BUFFER'."
-  (1password--create-in-buffer (string-join (list
-                                             "item"
-                                             "create"
-                                             "--generate-password=20,letters,digits")
-                                            " ")
-                               'buffer-string
-                               template-buffer)
-      ;; Clear cache and return result
-    (setq 1password--item-cache nil))
+(aio-defun 1password--create (template-buffer &optional dryrunp)
+  "Create a new 1Password entry using the template stored in `TEMPLATE-BUFFER'.
 
-;; TODO: Add support for other categories
-(defun 1password-create (&optional dryrunp)
-  "Create a new 1Password entry for the Login category.
+When `DRYRUNP' is non-nil it will not persist the entry in 1Password"
+  (aio-await (1password--create-in-buffer (string-join (list
+                                                        "item"
+                                                        "create"
+                                                        "--generate-password=20,letters,digits"
+                                                        (when dryrunp "--dry-run"))
+                                                       " ")
+                                          'buffer-string
+                                          template-buffer))
+  ;; Clear cache and return result
+  (setq 1password--item-cache nil))
 
-If `DRYRUNP' is non-nil it will not persist the entry in
-1Password.  This is primarily to use for testing or to have
-1Password create a password.
-
-Note: This only supports auto-generated password with 20
-characters of Letters and Digits."
-  (interactive)
-  (let* ((template-buffer (1password--fetch-template))
-         template)
-    (with-current-buffer template-buffer
+(defun 1password--update-template (template-buffer)
+  "Update the `TEMPLATE-BUFFER' with user supplied values."
+  (with-current-buffer template-buffer
       (setq template (json-parse-buffer))
       (puthash "title" (read-string "Entry name: ") template)
       (puthash "fields"
@@ -346,9 +369,23 @@ characters of Letters and Digits."
       (erase-buffer)
       (goto-char (point-min))
       (json-insert template)
-      (read-only-mode 1)
-      (1password--create template-buffer))
-    template))
+      (read-only-mode 1)))
+
+;; TODO: Add support for other categories
+(aio-defun 1password-create (&optional dryrunp)
+  "Create a new 1Password entry for the Login category.
+
+If `DRYRUNP' is non-nil it will not persist the entry in
+1Password.  This is primarily to use for testing or to have
+1Password create a password.
+
+Note: This only supports auto-generated password with 20
+characters of Letters and Digits."
+  (interactive)
+  (let* ((template-buffer (aio-await (1password--fetch-template "Login")))
+         template)
+    (1password--update-template template-buffer)
+    (aio-await (1password--create template-buffer))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; 1Password Share
@@ -436,7 +473,7 @@ This link will be valid for 7Hours."
 ;;       --long                    Output a more detailed item list.
 ;;       --tags tags               Only list items with these tags (comma-separated).
 ;;       --vault vault             Only list items in this vault.
-(defun 1password--item-list ()
+(aio-defun 1password--item-list ()
   "Return a list of all items in 1Password."
   (thread-first (string-join
                  '("item"
@@ -444,28 +481,30 @@ This link will be valid for 7Hours."
                    "--format"
                    "json")
                  " ")
-                1password--execute-in-buffer))
+                1password--execute-in-buffer-async
+                aio-await))
 
-(defun 1password--cached-item-list ()
+(aio-defun 1password--cached-item-list ()
   "Return the cached list of 1Password entries.
 
 If no cached entries are found, it retrieves the current list
 from the 1Password CLI."
   (if (bound-and-true-p 1password--item-cache)
       1password--item-cache
-    (setq 1password--item-cache (1password--item-list))))
+    (setq 1password--item-cache (aio-await (1password--item-list)))))
 
-(defun 1password--search-id (&optional ids)
+(aio-defun 1password--search-id (&optional ids)
   "Search a cached list of 1Password entries for entries with `IDS'."
-  (let* ((candidates (apply 1password-results-formatter
-                            (list (1password--cached-item-list))))
+  (let* ((candidates (aio-await (1password--cached-item-list)))
+         (formatted-candidates (funcall 1password-results-formatter
+                                        candidates))
          (response (completing-read "1Password title: "
-                                    candidates
+                                    formatted-candidates
                                     (when ids
                                       (lambda (entry)
                                         (member (cadr entry) ids)))
                                     't)))
-    (cadr (assoc response candidates))))
+    (cadr (assoc response formatted-candidates))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; 1Password Read
@@ -480,7 +519,7 @@ from the 1Password CLI."
 ;;   -h, --help                 Get help with read.
 ;;   -n, --no-newline           Do not print a new line after the secret.
 ;;   -o, --out-file string      Write the secret to a file instead of stdout.
-(cl-defun 1password--read (&rest spec &key vault entry-id field)
+(aio-defun 1password--read (entry-id field vault)
   "Read a `FIELD' from 1Password using properties found in `SPEC'.
 
 - `VAULT' is the vault where the entry is stored
@@ -491,7 +530,7 @@ from the 1Password CLI."
                             entry-id
                             field)
                            "/")))
-    (1password--execute-in-buffer args 'buffer-string)))
+    (aio-await (1password--execute-in-buffer-async args 'buffer-string))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Delete Commands
@@ -505,19 +544,21 @@ from the 1Password CLI."
 ;;       --archive        Move the item to the Archive.
 ;;   -h, --help           Get help with item delete.
 ;;       --vault string   Look for the item in this vault.
-(cl-defun 1password--delete (&rest spec &key entry-id vault)
+
+(aio-defun 1password--delete (entry-id vault)
   "Delete a 1Password entry that matches `SPEC'.
 
   - `VAULT' is the vault where the entry is stored
   - `ENTRY-ID' is the id of the entry"
   (let* ((args (string-join (list
-                            "item"
-                            "delete"
-                            entry-id
-                            "--archive"
-                            (when vault (format "--vault %s" vault)))
-                           " "))
-         (result (1password--execute-in-buffer args 'buffer-string)))
+                             "item"
+                             "delete"
+                             entry-id
+                             "--archive"
+                             (when vault (format "--vault %s" vault)))
+                            " "))
+         (message "delete")
+         (result (aio-await (1password--execute-in-buffer-async args 'buffer-string))))
     ;; Clear cache and return result
     (setq 1password--item-cache nil)
     result))
@@ -632,45 +673,40 @@ from the 1Password CLI."
 ;;   "Remove 1Password from auth-source integration")
 
 ;;;###autoload
-(defun 1password-search-id ()
+(aio-defun 1password-search-id ()
   "Search for 1Password id by entry name by title."
   (interactive)
-  (kill-new (1password--search-id))
+  (kill-new (aio-await (1password--search-id)))
   (message "1Password ID copied to clipboard"))
 
 ;;;###autoload
-(defun 1password-search-password ()
+(aio-defun 1password-search-password ()
   "Search for password by entry name."
   (interactive)
-  (let* ((id (1password--search-id))
-         (vault (thread-last (cl-find id 1password--item-cache :test
-                                      (lambda (target item)
-                                        (eq (gethash "id" item) target)))
-                             (gethash "vault")
-                             (gethash "name"))))
-    (kill-new (1password--read :vault vault :entry-id id :field "password"))
+  (let* ((id (aio-await (1password--search-id)))
+         (vault (1password--find-vault id)))
+    (kill-new (aio-await (1password--read id
+                                          "password"
+                                          vault)))
     (message "1Password secret copied to clipboard")))
 
 ;;;###autoload
-(defun 1password-delete ()
+(aio-defun 1password-delete ()
   "Deletes the selected 1password entry."
   (interactive)
-  (let* ((id (1password--search-id))
-        (vault (thread-last (cl-find id 1password--item-cache :test
-                                     (lambda (target item)
-                                       (eq (gethash "id" item) target)))
-                            (gethash "vault")
-                            (gethash "name"))))
-    (1password--delete :entry-id id :vault vault)
+  (let* ((id (aio-await (1password--search-id)))
+         (message "%s" id)
+         (vault (1password--find-vault id)))
+    (aio-await (1password--delete id vault))
     (message "1Password entry deleted")))
 
-;; (defun 1password-generate-password ()
-;;   "Generates a random password using 1Password"
-;;   (interactive)
-;;   (let* ((response (1password--item-create "thing" nil 't)))
-;;     (password (gethash "password" response)))
-;;   (kill-new password)
-;;   (message "1Password generated password copied to clipboard"))
+(aio-defun 1password-generate-password ()
+  "Generates a random password using 1Password"
+  (interactive)
+  (let* ((response (1password--item-create "thing" nil 't)))
+    (password (gethash "password" response)))
+  (kill-new password)
+  (message "1Password generated password copied to clipboard"))
 
 ;; Local Variables:
 ;; read-symbol-shorthands: (("op-" . "1password-"))
