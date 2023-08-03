@@ -1,29 +1,24 @@
 * 1Password.el
 This is an alpha implementation of integration with the 1Password CLI.
-** Setup
-- make sure you have 1Password CLI installed
-
+** Prerequisit
+- 1Password Subscription
+- [[https://1password.com/downloads/command-line/][1Password CLI]]
+** Installation
+#+begin_src elisp
+  (use-package 1password
+   :elpaca  (1password :host github :repo "justinbarclay/1password.el" :branch "main")
+   :init
+   (1password-enable-auth-source)
+   :custom
+   ((1password-results-formatter . '1password-colour-formatter)))
+#+end_src
 ** Features
 - [X] auth-source integration for searching by title or id
 - [X] Interactive commands based on `op items` commands
-  - [X] op item list
-  - [X] op item get password
-  - [X] op item create
-  - [X] op item delete
-  - [X] op item share
-- [ ] generate password command
-** Dev TODO
-- better handle situations where json module isn't guaranteed
-- make an async version execute in buffer
+- [ ] Add support for transient
+- [ ] Add list view for 1password entries
 ** Auth Source
 It's important to remember that auth-source's default behaviour is to cache items for 7200 seconds. So, if you don't like your secrets sticking around in memory set ~auth-source-do-source~ to nil or ~auth-source-cache-expiry~ to a lower threshold.
-
-#+begin_src elisp
-(use-package 1password
- :elpaca  (1password :host github :repo "justinbarclay/1password.el" :branch "main")
- :init
- (1password-enable-auth-source))
-#+end_src
 
 This will add a new auth-source backend ~1password~ that let's you query for things normally:
 #+begin_src elisp :results code
@@ -37,10 +32,29 @@ This will add a new auth-source backend ~1password~ that let's you query for thi
 
 Or if you want to query only from 1Password
 #+begin_src elisp :results code
- (auth-source-search :type '1password :host "api.github.com")
+(auth-source-search :type '1password :host "api.github.com")
 #+end_src
 
 #+RESULTS:
 #+begin_src elisp
 (:backend 1password :host "api.github.com" :username "githubapi@justinbarclay.ca" :secret "JMH73PktuQK4eCPAvPvc")
 #+end_src
+
+If you have have multiple entries with the same name/host using the 1Password entry id allows for a more consistent experience. You can use ~1password-search-id~ command to find the id you're looking for.
+#+begin_src elisp
+(1password-search-id) ;; => e5bqgijucvosdsfovxq5gglgiu
+#+end_src
+
+#+begin_src elisp :results code
+(auth-source-search :type '1password :host "e5bqgijucvozizovxq5qkulgiu")
+#+end_src
+
+#+RESULTS:
+#+begin_src elisp
+nil
+#+end_src
+
+** TODO Dev
+- better handle situations where json module isn't guaranteed
+- add support for other 1password commands
+- allow reading and editing of 1password documents in Emacs
