@@ -124,7 +124,7 @@ When `DRYRUNP' the new entry will not persist the entry in
 ;;   -h, --help              Get help with item share.
 ;;       --vault string      Look for the item in this vault.
 ;;       --view-once         Expire link after a single view.
-(defun 1password--share (item-id email)
+(aio-defun 1password--share (item-id email)
   "Generate a link for `ITEM-ID' that is valid for the given `EMAIL'.
 
 This link will be valid for 7Hours."
@@ -134,7 +134,9 @@ This link will be valid for 7Hours."
                           item-id
                           "--emails" email)
                     " ")))
-         (1password--execute-in-buffer args)))
+         (aio-await (1password--execute-in-buffer-async args 'buffer-string))))
+
+
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; 1Password Get

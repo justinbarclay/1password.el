@@ -323,14 +323,6 @@ You can use `1password-search-id' to find the id for of an entry."
 ;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; User Commands
 ;;;;;;;;;;;;;;;;;;;;;;;;;
-;; TODO: Add support for custom categories
-;; TODO: Add support for more than 1 emails
-;;;###autoload
-(defun 1password-share ()
-  "Shares the selected 1Password entry to the specified entry."
-  (interactive)
-  (1password--share (1password--search-id)
-                    (read-string "Email: ")))
 ;;;###autoload
 (defun 1password-enable-auth-source ()
   "Enable 1Password integration with auth-source."
@@ -338,11 +330,23 @@ You can use `1password-search-id' to find the id for of an entry."
   (add-hook 'auth-source-backend-parser-functions #'1password-auth-source-backend-parse)
   (add-to-list 'auth-sources '1password))
 
+;;;###autoload
 (defun 1password-disable-auth-source ()
   "Remove 1Password from auth-source integration."
   (interactive)
   (remove-hook 'auth-source-backend-parser-functions #'1password-auth-source-backend-parse)
   (setq auth-sources (remove '1password auth-sources)))
+
+;; TODO: Add support for custom categories
+;; TODO: Add support for more than 1 emails
+;;;###autoload
+(aio-defun 1password-share ()
+  "Shares the selected 1Password entry to the specified entry."
+  (interactive)
+  (kill-new (aio-await
+             (1password--share (aio-await (1password--search-id))
+                               (read-string "Email: "))))
+  (message "1Password share link copied to clipboard"))
 
 ;;;###autoload
 (aio-defun 1password-search-id ()
