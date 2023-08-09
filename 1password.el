@@ -323,14 +323,14 @@ You can use `1password-search-id' to find the id for of an entry."
 ;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; User Commands
 ;;;;;;;;;;;;;;;;;;;;;;;;;
-;;;###autoload
+;;;###autoload (autoload '1password-enable-auth-source "1password" nil t)
 (defun 1password-enable-auth-source ()
   "Enable 1Password integration with auth-source."
   (interactive)
   (add-hook 'auth-source-backend-parser-functions #'1password-auth-source-backend-parse)
   (add-to-list 'auth-sources '1password))
 
-;;;###autoload
+;;;###autoload (autoload '1password-disable-auth-source "1password" nil t)
 (defun 1password-disable-auth-source ()
   "Remove 1Password from auth-source integration."
   (interactive)
@@ -339,7 +339,7 @@ You can use `1password-search-id' to find the id for of an entry."
 
 ;; TODO: Add support for custom categories
 ;; TODO: Add support for more than 1 emails
-;;;###autoload
+;;;###autoload (autoload '1password-share "1password" nil t)
 (aio-defun 1password-share ()
   "Shares the selected 1Password entry to the specified entry."
   (interactive)
@@ -348,14 +348,14 @@ You can use `1password-search-id' to find the id for of an entry."
                                (read-string "Email: "))))
   (message "1Password share link copied to clipboard"))
 
-;;;###autoload
+;;;###autoload (autoload '1password-search-id "1password" nil t)
 (aio-defun 1password-search-id ()
   "Search for 1Password id by entry name by title."
   (interactive)
   (kill-new (aio-await (1password--search-id)))
   (message "1Password ID copied to clipboard"))
 
-;;;###autoload
+;;;###autoload (autoload '1password-search-password "1password" nil t)
 (aio-defun 1password-search-password ()
   "Search for password by entry name."
   (interactive)
@@ -366,7 +366,7 @@ You can use `1password-search-id' to find the id for of an entry."
                                           vault)))
     (message "1Password secret copied to clipboard")))
 
-;;;###autoload
+;;;###autoload (autoload '1password-delete "1password" nil t)
 (aio-defun 1password-delete ()
   "Deletes the selected 1password entry."
   (interactive)
@@ -376,16 +376,16 @@ You can use `1password-search-id' to find the id for of an entry."
     (aio-await (1password--delete id vault))
     (message "1Password entry deleted")))
 
-(aio-defun 1password-generate-password ()
-  "Generates a random password using 1Password"
-  (interactive)
-  (let* ((response (1password--item-create "thing" nil 't)))
-    (password (gethash "password" response)))
-  (kill-new password)
-  (message "1Password generated password copied to clipboard"))
+;; (aio-defun 1password-generate-password ()
+;;   "Generates a random password using 1Password"
+;;   (interactive)
+;;   (let* ((response (1password--item-create "thing" nil 't)))
+;;     (password (gethash "password" response)))
+;;   (kill-new password)
+;;   (message "1Password generated password copied to clipboard"))
 
 ;; TODO: Add support for custom categories
-;;;###autoload
+;;;###autoload (autoload '1password-create "1password" nil t)
 (aio-defun 1password-create ()
   "Create a new 1Password entry for the Login category.
 
