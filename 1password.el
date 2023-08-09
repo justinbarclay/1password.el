@@ -29,13 +29,13 @@
 ;;; Code:
 ;;
 
-(require 'auth-source)
-(require 'subr-x)
-(require 'json)
-(require 'cl-lib)
-(require '1password-item)
 (require '1password-lib)
+(require '1password-item)
 (require 'aio)
+(require 'auth-source)
+(require 'cl-lib)
+(require 'json)
+(require 'subr-x)
 
 (defgroup 1password nil
   "1Password integration for Emacs."

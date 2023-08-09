@@ -4,11 +4,11 @@
 
 ;;; Code:
 
-(require 'subr-x)
-(require 'json)
-(require 'cl-lib)
 (require '1password-lib)
 (require 'aio)
+(require 'cl-lib)
+(require 'json)
+(require 'subr-x)
 ;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; 1Password Create
 ;;;;;;;;;;;;;;;;;;;;;;;;;

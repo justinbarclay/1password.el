@@ -3,9 +3,10 @@
 ;;; Commentary:
 
 ;;; Code:
-(require 'json)
-(require 'cl-lib)
+
 (require 'aio)
+(require 'cl-lib)
+(require 'json)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Helper methods
