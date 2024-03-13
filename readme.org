@@ -14,7 +14,7 @@ This is an alpha implementation of integration with the 1Password CLI.
 #+end_src
 ** Features
 - [X] auth-source integration for searching by title or id
-- [X] Interactive commands based on `op items` commands
+- [X] Interactive `op items` commands
 - [ ] Add support for transient
 - [ ] Add list view for 1password entries
 ** Auth Source

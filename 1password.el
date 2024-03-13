@@ -194,8 +194,8 @@ Then if we called:
       ids)))
 
 (cl-defun 1password--auth-source-search (&rest spec
-                                               &key host id
-                                               &allow-other-keys)
+                                         &key host id
+                                         &allow-other-keys)
   "Execute 1Passwords `get item' command on the `HOST' or `ID' key.
 
 If both `ID' and `HOST' are specified in `SPEC',
@@ -209,7 +209,7 @@ host to be a unique name or use the 1Password ID for the item.
 You can use `1password-search-id' to find the id for of an entry."
   (thread-last (1password--search :id-or-name (or host id))
                (cl-substitute :secret :password)
-               (cl-substitute :login :username)
+               (cl-substitute :user :username)
                (append (list :backend '1password :host host :port nil))
                (list)))
 
