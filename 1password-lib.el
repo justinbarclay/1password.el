@@ -11,9 +11,10 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Helper methods
 ;;;;;;;;;;;;;;;;;;;;;;;;;
-(cl-defun 1password--execute-in-buffer (args &optional
-                                             (buffer-reader-fn #'json-parse-buffer)
-                                             (buffer-name "*1password*"))
+(cl-defun 1password--execute-in-buffer (args
+                                        &optional
+                                        (buffer-reader-fn #'json-parse-buffer)
+                                        (buffer-name "*1password*"))
   "Run the 1password executable with `ARGS' and processes the JSON response.
 
 `BUFFER-READER-FN' is a function that will be used to process the
@@ -49,7 +50,7 @@ output of the call to the 1Password CLI.  By default, this is
          (promise (aio-promise))
          (op-response nil)
          (filter-fn (lambda (process string)
-                            (setq op-response (concat op-response string))))
+                      (setq op-response (concat op-response string))))
          (sentinel-fn (lambda (process event)
                         (let ((data (funcall process-parse-fn op-response)))
                           (aio-resolve promise (lambda () data))))))
