@@ -11,9 +11,10 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Helper methods
 ;;;;;;;;;;;;;;;;;;;;;;;;;
-(cl-defun 1password--execute-in-buffer (args &optional
-                                             (buffer-reader-fn #'json-parse-buffer)
-                                             (buffer-name "*1password*"))
+(cl-defun 1password--execute-in-buffer (args
+                                        &optional
+                                        (buffer-reader-fn #'json-parse-buffer)
+                                        (buffer-name "*1password*"))
   "Run the 1password executable with `ARGS' and processes the JSON response.
 
 `BUFFER-READER-FN' is a function that will be used to process the

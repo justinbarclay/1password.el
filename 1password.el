@@ -54,7 +54,7 @@
   :type '(function)
   :group '1password)
 
-(defgroup 1Password-faces nil
+(defgroup 1password-faces nil
   "Faces used by `1Password'."
   :group '1Password
   :group 'faces)
@@ -105,9 +105,9 @@
 ;;
 ;; TODO Refactor
 (cl-defun 1password--get-query-builder (&key id-or-name
-                                             (field-keys '(username password))
-                                             vault
-                                             &allow-other-keys)
+                                          (field-keys '(username password))
+                                          vault
+                                          &allow-other-keys)
   "Builds a query for 1Password's `get item' command using `ID-OR-NAME'.
 
 `FIELD-KEYS' is the list of fields that 1Password CLI will try
@@ -195,7 +195,7 @@ Then if we called:
 
 (cl-defun 1password--auth-source-search (&rest spec
                                          &key host id
-                                         &allow-other-keys)
+                                           &allow-other-keys)
   "Execute 1Passwords `get item' command on the `HOST' or `ID' key.
 
 If both `ID' and `HOST' are specified in `SPEC',
@@ -300,12 +300,12 @@ You can use `1password-search-id' to find the id for of an entry."
                                                     (1password--nested-get field candidate ""))))
                      (propertize formatted-string
                                  'face (cond
-                                        ((and (listp field)
-                                              (equal field '("vault" "name")))
-                                         '1password--vault-name-face)
-                                        ((string= field "title") '1password--title-face)
-                                        ((string= field "additional_information") '1password--additional-information-face)
-                                        (t 'default)))))
+                                         ((and (listp field)
+                                               (equal field '("vault" "name")))
+                                          '1password--vault-name-face)
+                                         ((string= field "title") '1password--title-face)
+                                         ((string= field "additional_information") '1password--additional-information-face)
+                                         (t 'default)))))
                  fields)
                 " ")
                (gethash "id" candidate)))
@@ -340,13 +340,14 @@ You can use `1password-search-id' to find the id for of an entry."
 ;; TODO: Add support for custom categories
 ;; TODO: Add support for more than 1 emails
 ;;;###autoload (autoload '1password-share "1password" nil t)
-(aio-defun 1password-share ()
+(aio-defun 1password-share (&optional id)
   "Shares the selected 1Password entry to the specified entry."
   (interactive)
   (kill-new (aio-await
-             (1password--share (aio-await (1password--search-id))
-                               (read-string "Email: "))))
-  (message "1Password share link copied to clipboard"))
+             (1password--share (or id
+                                   (aio-await (1password--search-id)))
+                               (read-string "Email: ")))
+            (message "1Password share link copied to clipboard")))
 
 ;;;###autoload (autoload '1password-search-id "1password" nil t)
 (aio-defun 1password-search-id ()

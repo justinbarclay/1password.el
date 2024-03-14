@@ -134,7 +134,7 @@ This link will be valid for 7Hours."
          (aio-await (1password--execute-async args 'identity))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;
-;; 1Password Get
+;; 1Password List
 ;;;;;;;;;;;;;;;;;;;;;;;;;
 (defun 1password--extract-data (json)
   "Extract the label and value from each entry in `JSON'.
@@ -173,6 +173,12 @@ This link will be valid for 7Hours."
      (list (intern (concat ":" (gethash "label" response)))
            (gethash "value" response)))
    json))
+
+(aio-defun 1password--get (id)
+  "Get a list of all items in 1Password."
+  (thread-first (1password--get-query-builder id)
+                1password--execute-in-buffer-async
+                aio-await))
 
 ;; Get a CSV list of the username, and password for all logins in a vault:
 ;;
