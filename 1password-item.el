@@ -47,7 +47,7 @@
   "Fetches the `op' template for the chosen `CATEGORY'."
   (let ((template-buffer (get-buffer-create (or buffer-name
                                                 "*1password-template*"))))
-    (aio-await (1password--execute-in-buffer-async
+    (aio-await (1password--execute-async
                 (string-join (list
                               "item"
                               "template"
@@ -56,7 +56,7 @@
                               "--format"
                               "json")
                              " ")
-                'buffer-string
+                'identity
                 template-buffer))
     template-buffer))
 
@@ -85,7 +85,7 @@ When `DRYRUNP' the new entry will not persist the entry in
        nil
        template-file))
   (aio-await
-   (1password--execute-in-buffer-async
+   (1password--execute-async
     (string-join (list
                   "item"
                   "create"
@@ -93,7 +93,7 @@ When `DRYRUNP' the new entry will not persist the entry in
                   template-file
                   "--generate-password=20,letters,digits")
                  " ")
-    'buffer-string))
+    'identity))
     ;; Clear cache and return result
   (setq 1password--item-cache nil))
 
@@ -134,9 +134,7 @@ This link will be valid for 7Hours."
                           item-id
                           "--emails" email)
                     " ")))
-         (aio-await (1password--execute-in-buffer-async args 'buffer-string))))
-
-
+         (aio-await (1password--execute-async args 'identity))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; 1Password Get
@@ -201,7 +199,7 @@ This link will be valid for 7Hours."
                    "--format"
                    "json")
                  " ")
-                1password--execute-in-buffer-async
+                1password--execute-async
                 aio-await))
 
 (aio-defun 1password--cached-item-list ()
@@ -250,7 +248,7 @@ from the 1Password CLI."
                             entry-id
                             field)
                            "/")))
-    (aio-await (1password--execute-in-buffer-async args 'buffer-string))))
+    (aio-await (1password--execute-async args 'identity))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Delete Commands
@@ -278,7 +276,7 @@ from the 1Password CLI."
                              (when vault (format "--vault %s" vault)))
                             " "))
          (message "delete")
-         (result (aio-await (1password--execute-in-buffer-async args 'buffer-string))))
+         (result (aio-await (1password--execute-async args 'identity))))
     ;; Clear cache and return result
     (setq 1password--item-cache nil)
     result))

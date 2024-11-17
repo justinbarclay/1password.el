@@ -33,10 +33,10 @@ output of the call to the 1Password CLI.  By default, this is
       (goto-char (point-min))
       (eval (list buffer-reader-fn)))))
 
-(cl-defun 1password--execute-in-buffer-async (args
-                                              &optional
-                                              (buffer-reader-fn #'json-parse-buffer)
-                                              (buffer-name "*1password*"))
+(cl-defun 1password--execute-async (args
+                                    &optional
+                                    (process-parse-fn #'json-parse-string)
+                                    (buffer-name "*1password*"))
   "Run the 1password executable with `ARGS' and return a promise.
 
 `BUFFER-READER-FN' is a function that will be used to process the
@@ -45,24 +45,21 @@ output of the call to the 1Password CLI.  By default, this is
 
 `BUFFER-NAME' is the name of the buffer that will house the
 1Password process and that 1Password will dump its output too"
-  (with-current-buffer (get-buffer-create buffer-name)
-    (let* ((qualifed-executable (executable-find 1password-executable))
-           (promise (aio-promise))
-           (sentinel-fn (lambda (process event)
-                          (let ((data (with-current-buffer (process-buffer process)
-                                                   (special-mode)
-                                                   (goto-char (point-min))
-                                                   (funcall buffer-reader-fn))))
-                            (aio-resolve promise (lambda () data))))))
-      (unless qualifed-executable
-        (error (format "Unable to find 1Password CLI '%s'" 1password-executable)))
-      (read-only-mode -1)
-      (erase-buffer)
-      (make-process :name "1password"
-                    :buffer buffer-name
-                    :command (append (list 1password-executable "--no-color") (split-string args " "))
-                    :sentinel sentinel-fn)
-      promise)))
+  (let* ((qualifed-executable (executable-find 1password-executable))
+         (promise (aio-promise))
+         (op-response nil)
+         (filter-fn (lambda (process string)
+                            (setq op-response (concat op-response string))))
+         (sentinel-fn (lambda (process event)
+                        (let ((data (funcall process-parse-fn op-response)))
+                          (aio-resolve promise (lambda () data))))))
+    (unless qualifed-executable
+      (error (format "Unable to find 1Password CLI '%s'" 1password-executable)))
+    (make-process :name "1password"
+                  :command (append (list 1password-executable "--no-color") (split-string args " "))
+                  :filter filter-fn
+                  :sentinel sentinel-fn)
+    promise))
 
 ;; Local Variables:
 ;; End:
