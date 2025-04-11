@@ -72,11 +72,8 @@
               field))
           fields))
 
-(aio-defun 1password--create (template-file &optional dryrunp)
-  "Create a new 1Password entry using the template stored in `TEMPLATE-BUFFER'.
-
-When `DRYRUNP' the new entry will not persist the entry in
-1Password, instead the password will be returned."
+(aio-defun 1password--create (template-buffer template-file)
+  "Create a new 1Password entry using the template stored in `TEMPLATE-BUFFER'."
   (with-current-buffer template-buffer
       (set-visited-file-name template-file 'nil)
       (setq buffer-save-without-query 't)
