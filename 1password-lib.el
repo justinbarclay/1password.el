@@ -31,7 +31,7 @@ output of the call to the 1Password CLI.  By default, this is
       (apply #'call-process qualifed-executable nil 't  nil (cons "--no-color" (split-string-and-unquote args " ")))
       (special-mode)
       (goto-char (point-min))
-      (eval (list buffer-reader-fn)))))
+      (funcall buffer-reader-fn))))
 
 (cl-defun 1password--execute-async (args
                                     &optional

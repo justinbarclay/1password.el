@@ -41,7 +41,7 @@
              (split-string args " ")))
     (with-current-buffer output-buffer
       (special-mode)
-      (eval (list buffer-reader-fn)))))
+      (funcall buffer-reader-fn))))
 
 (aio-defun 1password--fetch-template (category &optional buffer-name)
   "Fetches the `op' template for the chosen `CATEGORY'."
