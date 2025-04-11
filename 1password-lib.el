@@ -28,7 +28,7 @@ output of the call to the 1Password CLI.  By default, this is
         (error (format "Unable to find 1Password CLI '%s'" 1password-executable)))
       (read-only-mode -1)
       (erase-buffer)
-      (apply #'call-process qualifed-executable nil 't  nil (cons "--no-color" (split-string args " ")))
+      (apply #'call-process qualifed-executable nil 't  nil (cons "--no-color" (split-string-and-unquote args " ")))
       (special-mode)
       (goto-char (point-min))
       (eval (list buffer-reader-fn)))))
@@ -56,7 +56,7 @@ output of the call to the 1Password CLI.  By default, this is
     (unless qualifed-executable
       (error (format "Unable to find 1Password CLI '%s'" 1password-executable)))
     (make-process :name "1password"
-                  :command (append (list 1password-executable "--no-color") (split-string args " "))
+                  :command (append (list 1password-executable "--no-color") (split-string-and-unquote args " "))
                   :filter filter-fn
                   :sentinel sentinel-fn)
     promise))
