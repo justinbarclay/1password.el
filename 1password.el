@@ -36,6 +36,8 @@
 (require 'cl-lib)
 (require 'json)
 (require 'subr-x)
+(require 'tabulated-list)
+(require 'widget)
 
 (defgroup 1password nil
   "1Password integration for Emacs."
@@ -227,62 +229,6 @@ You can use `1password-search-id' to find the id for of an entry."
 ;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Candidate Formatting
 ;;;;;;;;;;;;;;;;;;;;;;;;;
-(defun 1password--nested-get (fields candidate &optional dflt)
-  (if (stringp fields)
-      (gethash fields candidate)
-    (or (cl-reduce (lambda (field field-name)
-                     (and
-                      field
-                      (gethash field-name field nil)))
-                   fields
-                   :initial-value candidate)
-        dflt)))
-
-(defun 1password--nested-put-helper (fields value candidate)
-  (if (= (length fields) 1)
-      (progn
-        (puthash (car fields) value candidate)
-        candidate)
-    (let ((field (or (gethash (car fields) candidate)
-                     (make-hash-table :test 'equal))))
-      (puthash (car fields)
-               (1password--nested-put-helper (cdr fields)
-                                             value
-                                             field)
-               candidate)
-      candidate)))
-
-(defun 1password--nested-put (fields value candidate)
-  (if (stringp fields)
-      (progn
-        (puthash fields value candidate)
-        candidate)
-    (1password--nested-put-helper fields
-                                  value
-                                  candidate)))
-
-(defun 1password--max-candidate-lengths (candidates fields)
-  "Return a hash-table of the max length of each `FIELDS' in `CANDIDATES'.
-
-- `CANDIDATES' is a hash
-- `FIELDS' is a list of fields to check for the max length"
-  (cl-reduce (lambda (acc candidate)
-               (dolist (field fields)
-                 (if (listp field)
-                     (1password--nested-put field
-                                            (max
-                                             (1password--nested-get field acc 0)
-                                             (length (1password--nested-get field candidate "")))
-                                            acc)
-                   (puthash field
-                            (max
-                             (gethash field acc 0)
-                             (length (gethash field candidate "")))
-                            acc)))
-               acc)
-             candidates
-             :initial-value (make-hash-table :test 'equal :size (length fields))))
-
 (defun 1password-colour-formatter (results)
   "Format the cached `RESULTS' from 1Password for Minibuffer Completion."
   (let* ((fields '("title" "additional_information" ("vault" "name")))
@@ -320,9 +266,162 @@ You can use `1password-search-id' to find the id for of an entry."
       (gethash "id" response)))
    results))
 
+(defun 1password-build-item-view (details item-id)
+  (let* ((item-title (or (gethash "title" details) item-id))
+         (details-buffer-name (format "*1Password Edit: %s*" item-title))
+         (details-buffer (get-buffer-create details-buffer-name))
+         ;; Store original values to detect changes
+         (original-values (make-hash-table :test 'equal)))
+    (with-current-buffer details-buffer
+      (let ((inhibit-read-only t)
+            (standard-output details-buffer)) ; Make widget output go here
+        (erase-buffer)
+        ;; (widgets-minor-mode)
+
+        ;; --- Header Info (Read Only) ---
+        (widget-create 'widget-read-only
+                       :value (format "Editing Item: %s (ID: %s)" item-title item-id)
+                       :format "%v\n\n")
+        (widget-create 'widget-read-only
+                       :value (format "Vault: %s" (gethash "name" (gethash "vault" details "")))
+                       :format "  %v\n")
+        (widget-create 'widget-read-only
+                       :value (format "Category: %s" (gethash "category" details ""))
+                       :format "  %v\n\n")
+
+        ;; --- Editable Title ---
+        (let ((orig-title (gethash "title" details "")))
+          (puthash "title" orig-title original-values)
+          (widget-create 'widget-editable-field
+                         :format "Title:    %v\n"
+                         :value orig-title
+                         'widget-id "title")) ; Use widget-id for easy retrieval
+
+        ;; --- Editable Username & Password (if found) ---
+        (let ((fields (gethash "fields" details))) ; Get fields, could be nil or not a vector
+          (when (vectorp fields) ; Only proceed if fields is actually a vector
+            (dolist (field (coerce fields 'list))
+              (let ((purpose (gethash "purpose" field))
+                    (label (gethash "label" field))
+                    (value (gethash "value" field ""))))
+              ;; Username
+              (when (string= purpose "USERNAME")
+                (puthash "username" value original-values)
+                (widget-create 'widget-editable-field
+                               :format "Username: %v\n"
+                               :value value
+                               'widget-id "username"))
+              ;; Password
+              (when (string= purpose "PASSWORD")
+                (puthash "password" value original-values)
+                (widget-create 'widget-secret ; Use widget-secret for passwords
+                               :format "Password: %v\n"
+                               :value value
+                               'widget-id "password"))))) ; Close the when and dolist
+
+        ;; --- Separator & Buttons ---
+        (widget-create 'widget-hrule :width 40 :format "\n%v\n\n")
+
+        (widget-create
+         'widget-button
+         :notify (lambda (&rest _)
+                   (let ((assignments '())
+                         (widgets (widget-children)))
+                     ;; Collect changed values
+                     (dolist (w widgets)
+                       (let ((id (widget-get w 'widget-id)))
+                         (when id ; Only check widgets we tagged with an id
+                           (let ((current-val (widget-value w))
+                                 (original-val (gethash id original-values)))
+                             (unless (equal current-val original-val)
+                               (push (format "%s=%s" id current-val) assignments))))))
+
+                     (if assignments
+                         (progn
+                           (message "Saving changes...")
+                           (aio-call (1password--item-edit item-id (nreverse assignments))
+                                     (lambda (result)
+                                       (message "Item %s saved successfully." item-id)
+                                       ;; Optionally refresh list or close buffer
+                                       (kill-buffer (current-buffer))
+                                       ;; Refresh the list buffer if it exists
+                                       (when-let ((list-buf (get-buffer "*1Password Items*")))
+                                         (with-current-buffer list-buf
+                                           (revert-buffer t t t)))) ; Non-interactive revert
+                                     (lambda (err)
+                                       ;; Ensure err is a string for display
+                                       (let ((err-msg (if (stringp err) err (format "%S" err))))
+                                         (message "Error saving item %s: %s" item-id err-msg)
+                                         (display-warning '1password (format "Save failed: %s" err-msg) :error)))))
+                       (message "No changes to save.")
+                       (kill-buffer (current-buffer))))) ; Close if no changes
+         "Save Changes")
+
+        (insert "  ") ; Spacer
+
+        (widget-create
+         'widget-button
+         :notify (lambda (&rest _)
+                   (kill-buffer (current-buffer))
+                   (message "Edit cancelled."))
+         "Cancel")
+
+        ;; --- Final Setup ---
+        (widget-setup)
+        (goto-char (point-min))))))
+(aio-defun 1password-show-item-details ()
+  "Fetch and display details for the 1Password item on the current line using widgets."
+  (interactive)
+  (let ((item-id (tabulated-list-get-id)))
+    (when item-id
+      (message "Fetching details for %s..." item-id)
+      (let ((details (aio-await (1password--item-get item-id)))) ; details should be a parsed Lisp object (hash-table)
+        (message "%s" details)
+        ;; Ensure details is a hash-table before proceeding
+        (unless (hash-table-p details)
+          (error "Failed to parse item details for %s. Expected hash-table, got: %S" item-id details))
+        (1password-build-item-view details item-id)
+
+        (pop-to-buffer details-buffer)
+        (message "Displaying details for %s in editable form." item-title)))))
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; User Commands
 ;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;###autoload (autoload '1password-list "1password" nil t)
+(aio-defun 1password-list ()
+  "List all 1Password items using tabulated-list-mode."
+  (interactive)
+  (let* ((items (aio-await (1password--item-list))) ; Use non-cached version for freshness
+         (buffer-name "*1Password Items*")
+         ;; Define columns: Name, Width, Sortable (nil means not sortable by clicking header)
+         (tabulated-list-format
+          [("Title"    30 nil)
+           ("Vault"    20 nil)
+           ("Category" 15 nil)])
+         ;; Prepare entries: (id [column-vector])
+         (tabulated-list-entries
+          (mapcar (lambda (item)
+                    (let ((id (gethash "id" item))
+                          (title (gethash "title" item ""))
+                          ;; Safely get vault name
+                          (vault-name (let ((vault-hash (gethash "vault" item)))
+                                        (if vault-hash (gethash "name" vault-hash "") "")))
+                          (category (gethash "category" item "")))
+                      (list id (vector title vault-name category))))
+                  items)))
+    ;; Create and populate the buffer
+    (with-current-buffer (get-buffer-create buffer-name)
+      (let ((inhibit-read-only t))
+        (erase-buffer)
+        (tabulated-list-mode)
+        ;; Bind RET (Enter) to show details
+        (define-key tabulated-list-mode-map (kbd "RET") #'1password-show-item-details)
+        ;; tabulated-list-entries and tabulated-list-format are buffer-local
+        ;; and set via the outer let*. Now initialize and print.
+        (tabulated-list-init-header)
+        (tabulated-list-print)))
+    (pop-to-buffer buffer-name)))
 ;;;###autoload (autoload '1password-enable-auth-source "1password" nil t)
 (defun 1password-enable-auth-source ()
   "Enable 1Password integration with auth-source."

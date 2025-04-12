@@ -60,7 +60,7 @@ output of the call to the 1Password CLI.  By default, this is
                                     (error (aio-reject promise err))) ;; Reject on parse error
                                 (aio-reject promise (format "1Password process failed: %s. Output: %s" event op-response))) ;; Reject on non-zero exit
                             ;; Handle other statuses like 'run', 'stop', etc. if necessary, though unlikely here
-                            (aio-reject promise (format "1Password process ended unexpectedly: %s" event))))))))
+                            (aio-reject promise (format "1Password process ended unexpectedly: %s" event)))))))
     (unless qualifed-executable
       (error (format "Unable to find 1Password CLI '%s'" 1password-executable)))
     (make-process :name "1password"
