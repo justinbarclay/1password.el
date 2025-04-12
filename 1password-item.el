@@ -9,6 +9,7 @@
 (require 'cl-lib)
 (require 'json)
 (require 'subr-x)
+(require 'widget)
 ;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; 1Password Create
 ;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -173,6 +174,21 @@ This link will be valid for 7Hours."
      (list (intern (concat ":" (gethash "label" response)))
            (gethash "value" response)))
    json))
+
+(aio-defun 1password--item-get (item-id)
+  "Fetch details for ITEM-ID using 'op item get --format json'."
+  (let ((args (string-join (list "item" "get" item-id "--format" "json") " ")))
+    ;; Use json-parse-string to get a parsed Lisp object directly
+    (aio-await (1password--execute-async args #'json-parse-string))))
+
+(aio-defun 1password--item-edit (item-id assignments)
+  "Edit ITEM-ID using 'op item edit' with field ASSIGNMENTS.
+ASSIGNMENTS should be a list of strings like \"field=value\"."
+  (unless assignments
+    (error "No changes to save"))
+  (let ((args (string-join (cons "item" (cons "edit" (cons item-id assignments))) " ")))
+    ;; Use identity as the parse function, we just care about success/failure message from op
+    (aio-await (1password--execute-async args 'identity))))
 
 ;; Get a CSV list of the username, and password for all logins in a vault:
 ;;
