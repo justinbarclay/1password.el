@@ -31,7 +31,7 @@ output of the call to the 1Password CLI.  By default, this is
       (apply #'call-process qualifed-executable nil 't  nil (cons "--no-color" (split-string-and-unquote args " ")))
       (special-mode)
       (goto-char (point-min))
-      (eval (list buffer-reader-fn)))))
+      (funcall buffer-reader-fn))))
 
 (cl-defun 1password--execute-async (args
                                     &optional
@@ -48,11 +48,19 @@ output of the call to the 1Password CLI.  By default, this is
   (let* ((qualifed-executable (executable-find 1password-executable))
          (promise (aio-promise))
          (op-response nil)
-         (filter-fn (lambda (process string)
-                            (setq op-response (concat op-response string))))
+         (filter-fn (lambda (_process string)
+                      (setq op-response (concat op-response string))))
          (sentinel-fn (lambda (process event)
-                        (let ((data (funcall process-parse-fn op-response)))
-                          (aio-resolve promise (lambda () data))))))
+                        (let ((status (process-status process)))
+                          (if (memq status '(exit signal)) ;; Check if process terminated normally or via signal
+                              (if (zerop (process-exit-status process))
+                                  (condition-case err
+                                      (let ((data (funcall process-parse-fn op-response)))
+                                        (aio-resolve promise (lambda () data)))
+                                    (error (aio-reject promise err))) ;; Reject on parse error
+                                (aio-reject promise (format "1Password process failed: %s. Output: %s" event op-response))) ;; Reject on non-zero exit
+                            ;; Handle other statuses like 'run', 'stop', etc. if necessary, though unlikely here
+                            (aio-reject promise (format "1Password process ended unexpectedly: %s" event)))))))
     (unless qualifed-executable
       (error (format "Unable to find 1Password CLI '%s'" 1password-executable)))
     (make-process :name "1password"
