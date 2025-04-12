@@ -170,10 +170,10 @@ For example if the *1password* buffer contains:
 
 [ERROR] 2023/05/20 00:20:53 More than one item matches \"login\".
 Try again and specify the item by its ID:
-	* for the item \"Login\" in vault Private: ai46l2ccrszcvygm2v6lltgchq
-	* for the item \"Login\" in vault Private: gijwlc4a2iipno6rm47sx6bxni
-	* for the item \"Login\" in vault Private: j6f64bfgbg3wssv6lklmsc6ayu
-	* for the item \"Login\" in vault Private: hpn47a3vncdtz77wg7eg6ix6ea
+  * for the item \"Login\" in vault Private: ai46l2ccrszcvygm2v6lltgchq
+  * for the item \"Login\" in vault Private: gijwlc4a2iipno6rm47sx6bxni
+  * for the item \"Login\" in vault Private: j6f64bfgbg3wssv6lklmsc6ayu
+  * for the item \"Login\" in vault Private: hpn47a3vncdtz77wg7eg6ix6ea
 
 Then if we called:
 \(1password--parse-buffer-for-ids\)
@@ -231,11 +231,11 @@ You can use `1password-search-id' to find the id for of an entry."
   (if (stringp fields)
       (gethash fields candidate)
     (or (cl-reduce (lambda (field field-name)
-                  (and
-                   field
-                   (gethash field-name field nil)))
-                fields
-                :initial-value candidate)
+                     (and
+                      field
+                      (gethash field-name field nil)))
+                   fields
+                   :initial-value candidate)
         dflt)))
 
 (defun 1password--nested-put-helper (fields value candidate)
@@ -394,7 +394,7 @@ This method generates defers to 1Password to generate a password using the optio
   (let* ((template-file (make-temp-file "1password-create.json"))
          (template-buffer (aio-await (1password--fetch-template "Login" template-file))))
     (1password--update-template template-buffer)
-    (aio-await (1password--create template-file dryrunp)))
+    (aio-await (1password--create template-bugger template-file)))
   (message "1Password entry created"))
 
 ;; Local Variables:
