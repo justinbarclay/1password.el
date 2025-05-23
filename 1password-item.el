@@ -13,8 +13,8 @@
 ;; 1Password Create
 ;;;;;;;;;;;;;;;;;;;;;;;;;
 (cl-defun 1password--create-in-buffer (args &optional
-                                             (buffer-reader-fn #'json-parse-buffer)
-                                             template-buffer)
+                                            (buffer-reader-fn #'json-parse-buffer)
+                                            template-buffer)
   "Sends the contents of the buffer to 1password to create an account.
 
 `ARGS' are the arguments to pass to `op create item'.
@@ -75,12 +75,12 @@
 (aio-defun 1password--create (template-buffer template-file)
   "Create a new 1Password entry using the template stored in `TEMPLATE-BUFFER'."
   (with-current-buffer template-buffer
-      (set-visited-file-name template-file 'nil)
-      (setq buffer-save-without-query 't)
-      (write-region
-       nil
-       nil
-       template-file))
+    (set-visited-file-name template-file 'nil)
+    (setq buffer-save-without-query 't)
+    (write-region
+     nil
+     nil
+     template-file))
   (aio-await
    (1password--execute-async
     (string-join (list
@@ -91,24 +91,24 @@
                   "--generate-password=20,letters,digits")
                  " ")
     'identity))
-    ;; Clear cache and return result
+  ;; Clear cache and return result
   (setq 1password--item-cache nil))
 
 (defun 1password--update-template (template-buffer)
   "Update the `TEMPLATE-BUFFER' with user supplied values."
   (with-current-buffer template-buffer
-      (setq template (json-parse-buffer))
-      (puthash "title" (read-string "Entry name: ") template)
-      (puthash "fields"
-               (apply 'vector
-                      (1password--update-template-fields
-                       (gethash "fields" template)))
-               template)
-      (read-only-mode -1)
-      (erase-buffer)
-      (goto-char (point-min))
-      (json-insert template)
-      (read-only-mode 1)))
+    (setq template (json-parse-buffer))
+    (puthash "title" (read-string "Entry name: ") template)
+    (puthash "fields"
+             (apply 'vector
+                    (1password--update-template-fields
+                     (gethash "fields" template)))
+             template)
+    (read-only-mode -1)
+    (erase-buffer)
+    (goto-char (point-min))
+    (json-insert template)
+    (read-only-mode 1)))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; 1Password Share
