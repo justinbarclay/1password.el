@@ -57,12 +57,12 @@ output of the call to the 1Password CLI.  By default, this is
                                   (condition-case err
                                       (let ((data (funcall process-parse-fn op-response)))
                                         (aio-resolve promise (lambda () data)))
-                                    (error (aio-reject promise err))) ;; Reject on parse error
-                                (aio-reject promise (format "1Password process failed: %s. Output: %s" event op-response))) ;; Reject on non-zero exit
+                                    (error (error err))) ;; Reject on parse error
+                                (error (format "1Password process failed: %s. Output: %s" event op-response))) ;; Reject on non-zero exit
                             ;; Handle other statuses like 'run', 'stop', etc. if necessary, though unlikely here
-                            (aio-reject promise (format "1Password process ended unexpectedly: %s" event)))))))
+                            (error (format "1Password process ended unexpectedly: %s" event)))))))
     (unless qualifed-executable
-      (error (format "Unable to find 1Password CLI '%s'" 1password-executable)))
+      (error (format "Unable to find 1Password CLI '%s'" qualifed-executable)))
     (make-process :name "1password"
                   :command (append (list qualifed-executable "--no-color") args)
                   :filter filter-fn
