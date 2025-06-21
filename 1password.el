@@ -343,10 +343,17 @@ You can use `1password-search-id' to find the id for of an entry."
 (aio-defun 1password-share ()
   "Shares the selected 1Password entry to the specified entry."
   (interactive)
-  (kill-new (aio-await
-             (1password--share (aio-await (1password--search-id))
-                               (read-string "Email: "))))
-  (message "1Password share link copied to clipboard"))
+
+  (let* ((id (aio-await (1password--search-id)))
+         (response (aio-await
+                    (1password--share id
+                                      (read-string "Email: ")))))
+    (if response
+        (progn
+          (kill-new response)
+          (message "1Password share link copied to clipboard"))
+      (message "1Password entry not found or does not contain a share link"))))
+
 
 ;;;###autoload (autoload '1password-search-id "1password" nil t)
 (aio-defun 1password-search-id ()
@@ -360,11 +367,15 @@ You can use `1password-search-id' to find the id for of an entry."
   "Search for password by entry name."
   (interactive)
   (let* ((id (aio-await (1password--search-id)))
-         (vault (1password--find-vault id)))
-    (kill-new (aio-await (1password--read id
-                                          "password"
-                                          vault)))
-    (message "1Password secret copied to clipboard")))
+         (vault (1password--find-vault id))
+         (result (aio-await (1password--read id
+                                             "password"
+                                             vault))))
+    (if result
+        (progn
+          (kill-new result)
+          (message "1Password secret copied to clipboard"))
+      (message "1Password entry not found or does not contain a password"))))
 
 ;;;###autoload (autoload '1password-delete "1password" nil t)
 (aio-defun 1password-delete ()
@@ -394,8 +405,10 @@ This method generates defers to 1Password to generate a password using the optio
   (let* ((template-file (make-temp-file "1password-create.json"))
          (template-buffer (aio-await (1password--fetch-template "Login" template-file))))
     (1password--update-template template-buffer)
-    (aio-await (1password--create template-bugger template-file)))
-  (message "1Password entry created"))
+    (if (aio-await (1password--create template-bugger template-file))
+        (message "1Password entry created")
+      (message "Unable to create 1Password entry"))))
+
 
 ;; Local Variables:
 ;; read-symbol-shorthands: (("op-" . "1password-"))
