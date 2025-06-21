@@ -13,8 +13,8 @@
 ;; 1Password Create
 ;;;;;;;;;;;;;;;;;;;;;;;;;
 (cl-defun 1password--create-in-buffer (args &optional
-                                             (buffer-reader-fn #'json-parse-buffer)
-                                             template-buffer)
+                                            (buffer-reader-fn #'json-parse-buffer)
+                                            template-buffer)
   "Sends the contents of the buffer to 1password to create an account.
 
 `ARGS' are the arguments to pass to `op create item'.
@@ -75,12 +75,12 @@
 (aio-defun 1password--create (template-buffer template-file)
   "Create a new 1Password entry using the template stored in `TEMPLATE-BUFFER'."
   (with-current-buffer template-buffer
-      (set-visited-file-name template-file 'nil)
-      (setq buffer-save-without-query 't)
-      (write-region
-       nil
-       nil
-       template-file))
+    (set-visited-file-name template-file 'nil)
+    (setq buffer-save-without-query 't)
+    (write-region
+     nil
+     nil
+     template-file))
   (aio-await
    (1password--execute-async
     (string-join (list
@@ -91,24 +91,24 @@
                   "--generate-password=20,letters,digits")
                  " ")
     'identity))
-    ;; Clear cache and return result
+  ;; Clear cache and return result
   (setq 1password--item-cache nil))
 
 (defun 1password--update-template (template-buffer)
   "Update the `TEMPLATE-BUFFER' with user supplied values."
   (with-current-buffer template-buffer
-      (setq template (json-parse-buffer))
-      (puthash "title" (read-string "Entry name: ") template)
-      (puthash "fields"
-               (apply 'vector
-                      (1password--update-template-fields
-                       (gethash "fields" template)))
-               template)
-      (read-only-mode -1)
-      (erase-buffer)
-      (goto-char (point-min))
-      (json-insert template)
-      (read-only-mode 1)))
+    (setq template (json-parse-buffer))
+    (puthash "title" (read-string "Entry name: ") template)
+    (puthash "fields"
+             (apply 'vector
+                    (1password--update-template-fields
+                     (gethash "fields" template)))
+             template)
+    (read-only-mode -1)
+    (erase-buffer)
+    (goto-char (point-min))
+    (json-insert template)
+    (read-only-mode 1)))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; 1Password Share
@@ -125,13 +125,13 @@
   "Generate a link for `ITEM-ID' that is valid for the given `EMAIL'.
 
 This link will be valid for 7Hours."
-       (let ((args (string-join
-                    (list "item"
-                          "share"
-                          item-id
-                          "--emails" email)
-                    " ")))
-         (aio-await (1password--execute-async args 'identity))))
+  (let ((args (string-join
+               (list "item"
+                     "share"
+                     item-id
+                     "--emails" email)
+               " ")))
+    (aio-await (1password--execute-async args 'identity))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; 1Password Get
@@ -190,12 +190,10 @@ This link will be valid for 7Hours."
 ;;       --vault vault             Only list items in this vault.
 (aio-defun 1password--item-list ()
   "Return a list of all items in 1Password."
-  (thread-first (string-join
-                 '("item"
-                   "list"
-                   "--format"
-                   "json")
-                 " ")
+  (thread-first '("item"
+                  "list"
+                  "--format"
+                  "json")
                 1password--execute-async
                 aio-await))
 
@@ -239,12 +237,10 @@ from the 1Password CLI."
 
 - `VAULT' is the vault where the entry is stored
 - `ENTRY-ID' is the id of the entry"
-  (let ((args (string-join (list
-                            "read op:/"
-                            vault
-                            entry-id
-                            field)
-                           "/")))
+  (let ((args (list "read"
+                    (string-join
+                     (list "op:/" vault entry-id field)
+                     "/"))))
     (aio-await (1password--execute-async args 'identity))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -265,13 +261,13 @@ from the 1Password CLI."
 
   - `VAULT' is the vault where the entry is stored
   - `ENTRY-ID' is the id of the entry"
-  (let* ((args (string-join (list
-                             "item"
-                             "delete"
-                             entry-id
-                             "--archive"
-                             (when vault (format "--vault %s" vault)))
-                            " "))
+  (let* ((args (list
+                "item"
+                "delete"
+                entry-id
+                "--archive"
+                "--vault"
+                vault))
          (message "delete")
          (result (aio-await (1password--execute-async args 'identity))))
     ;; Clear cache and return result
