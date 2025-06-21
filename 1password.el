@@ -4,7 +4,7 @@
 
 ;; Author: Justin Barclay <emacs@justinbarclay.ca>
 ;; URL: https://github.com/justinbarclay/1password.el
-;; Version: 0.1.0
+;; Version: 0.1.1
 ;; Package-Requires: ((aio "1.0") (emacs "28.2"))
 ;; Keywords: processes, convenience
 
