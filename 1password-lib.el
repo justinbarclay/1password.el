@@ -39,12 +39,15 @@ output of the call to the 1Password CLI.  By default, this is
                                     (buffer-name "*1password*"))
   "Run the 1password executable with `ARGS' and return a promise.
 
+The promise will resolve with non nil if the process exits successfully
+and nil otherwise.
+
 `BUFFER-READER-FN' is a function that will be used to process the
 output of the call to the 1Password CLI.  By default, this is
 `json-parse-buffer'.
 
 `BUFFER-NAME' is the name of the buffer that will house the
-1Password process and that 1Password will dump its output too"
+1Password process and that 1Password will dump its output to"
   (let* ((qualifed-executable (executable-find 1password-executable))
          (promise (aio-promise))
          (op-response nil)
@@ -52,15 +55,21 @@ output of the call to the 1Password CLI.  By default, this is
                       (setq op-response (concat op-response string))))
          (sentinel-fn (lambda (process event)
                         (let ((status (process-status process)))
-                          (if (memq status '(exit signal)) ;; Check if process terminated normally or via signal
-                              (if (zerop (process-exit-status process))
-                                  (condition-case err
-                                      (let ((data (funcall process-parse-fn op-response)))
-                                        (aio-resolve promise (lambda () data)))
-                                    (error (error err))) ;; Reject on parse error
-                                (error (format "1Password process failed: %s. Output: %s" event op-response))) ;; Reject on non-zero exit
-                            ;; Handle other statuses like 'run', 'stop', etc. if necessary, though unlikely here
-                            (error (format "1Password process ended unexpectedly: %s" event)))))))
+                          (when (memq status '(exit signal)) ;; Check if process terminated normally or via signal
+                            (aio-resolve
+                             promise
+                             (lambda ()
+                               (if (zerop (process-exit-status process))
+                                   (condition-case err
+                                       (funcall process-parse-fn op-response)
+                                     ;; Reject on parse error
+                                     (error (progn
+                                              (message "%s" err)
+                                              nil)))
+                                 ;; Reject on non-zero exit
+                                 (progn
+                                   (message "1Password process failed: %s. Output: %s" event op-response)
+                                   nil)))))))))
     (unless qualifed-executable
       (error (format "Unable to find 1Password CLI '%s'" qualifed-executable)))
     (make-process :name "1password"
