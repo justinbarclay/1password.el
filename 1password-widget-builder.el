@@ -1,4 +1,6 @@
 ;;; 1password-widget-builder.el --- 1password widget builder for editable forms -*- lexical-binding: t; -*-
+(require 'widget)
+(require 'json)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; TODO: Rework
@@ -44,43 +46,9 @@ Fields without a section are grouped under the key ':none'."
                        :object-type 'plist
                        :array-type 'list)))
 
-(defun 1password--extract-values (widget-map)
-  "Extract all values from the form widgets into an alist.
-The alist maps field IDs (as strings) to their values."
-  (let ((results '()))
-    (maphash (lambda (id widget)
-               (plist-put results id (widget-value widget)))
-             widget-map)
-    results))
-
 ;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Components
 ;;;;;;;;;;;;;;;;;;;;;;;;;
-
-(defun 1password--create-concealed-widget (id label value widget-map)
-  "Create a concealed input widget for passwords or PINs."
-  (let ((widget (widget-create 'editable-field
-                               :size 10
-                               :secret t
-                               value)))
-    (puthash id widget widget-map)))
-
-(defun 1password--create-string-widget (id label value widget-map &optional multiline)
-  "Create a string widget. If MULTILINE is non-nil, create a notes field."
-  (let* ((args (if multiline
-                   (list 'editable-field value)
-                 (list 'editable-field :size 40 value)))
-         (widget (apply #'widget-create args)))
-    (puthash id widget widget-map)))
-
-(defun 1password--save-button (widget-map)
-  "Add a Save button to the form."
-  (widget-insert "\n")
-  (widget-create 'push-button
-                 :notify (lambda (widget &rest ignore)
-                           (let ((form-data (1password--extract-values widget-map)))
-                             (message form-data)))
-                 "Save and Close"))
 
 (defun 1password--section-header (label)
   "Insert a formatted section header into the buffer."
@@ -90,25 +58,58 @@ The alist maps field IDs (as strings) to their values."
                                'face '1password-section-header-face))
     (widget-insert "\n")))
 
-(defun 1password--widget-dispatcher (field widget-map)
+(defun 1password--create-concealed-widget (value on-change)
+  "Create a concealed input widget for passwords or PINs."
+  (widget-create 'editable-field
+                 :size 10
+                 :secret t
+                 :notify on-change
+                 value))
+
+(defun 1password--create-string-widget (value on-change &optional multiline)
+  "Create a string widget. If MULTILINE is non-nil, create a notes field."
+  (let* ((args (if multiline
+                   (list 'editable-field
+                         :notify on-change
+                         value)
+
+                 (list 'editable-field
+                       :size 40
+                       :notify on-change
+                       value))))
+    (apply #'widget-create args)))
+
+(defun 1password--save-button (on-save)
+  "Add a Save button to the form."
+  (widget-insert "\n")
+  (widget-create 'push-button
+                 :notify on-save
+                 "Save and Close"))
+
+(defun 1password--notify-changes (widget &rest _)
+  (let ((new-value (widget-value widget)))
+    (setq-local 1password--form-changes
+                (plist-put 1password--form-changes id new-value))))
+
+(defun 1password--widget-dispatcher (field)
   "Dispatch to the correct widget creation function based on FIELD-DEF."
-  (let ((id  (plist-get field :id))
-        (type  (plist-get field :type))
-        (label  (plist-get field :label))
-        (value  (plist-get field :value)))
+  (let* ((id  (plist-get field :id))
+         (type  (plist-get field :type))
+         (label  (plist-get field :label))
+         (value  (plist-get field :value)))
     (when label
-      (widget-insert (format "%-25s: " label)))
+      (widget-insert (format "%-25s " label)))
     (pcase type
       ("STRING"
-       (1password--create-string-widget id label value widget-map))
+       (1password--create-string-widget value #'1password--notify-changes))
       ("CONCEALED"
-       (1password--create-concealed-widget id label value widget-map))
+       (1password--create-concealed-widget value #'1password--notify-changes))
       ("URL"
-       (1password--create-string-widget id label value widget-map))
+       (1password--create-string-widget value #'1password--notify-changes))
       ("ADDRESS"
-       (1password--create-string-widget id label value widget-map 't))
+       (1password--create-string-widget value #'1password--notify-changes 't))
       ("PHONE"
-       (1password--create-string-widget id label value widget-map))
+       (1password--create-string-widget value #'1password--notify-changes))
       ;; TODO
       ;; Handle Date
       ;;... other type clauses...
@@ -118,21 +119,47 @@ The alist maps field IDs (as strings) to their values."
 ;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Form
 ;;;;;;;;;;;;;;;;;;;;;;;;;
+(defun 1password--update-fields (record changes)
+  "Update the fields in RECORD with CHANGES."
+  (let ((fields (plist-get record :fields)))
+    (mapc
+     (lambda (field)
+       (let ((field-id (plist-get field :id)))
+         (if (plist-member changes field-id)
+             (plist-put field :value (plist-get changes field-id))
+           field)))
+     fields))
+  record)
+
+(defun 1password--save-item (record changes)
+  "Save the current form data to 1Password."
+  (let ((temp-file (make-temp-file (format "1password-%s-" (plist-get record :id)))))
+    (with-temp-file temp-file
+      (let* ((copied-record (copy-sequence record))
+             (updated-record (1password--update-fields copied-record changes)))
+        (json-insert updated-record
+                     :null-object :null)
+        (setq-local 1password--form-changes '())
+        (kill-current-buffer)))
+    temp-file))
 
 (defun 1password--create-form (json-string)
   "Create and display a dynamic form based on JSON-STRING."
   (interactive "sEnter JSON form definition: ")
   (let* ((record (parse-json-to-plist json-string))
-         (form-buffer (get-buffer-create (format "*1password: %s*" (plist-get record :title))))
-         (widget-map (make-hash-table :test 'equal))) ; Our ID-to-widget map
+         (form-buffer (format "*1password: %s*" (plist-get record :title))))
+    ;; Buffer setup)
+    (when (get-buffer form-buffer)
+      ;; Remove buffer if it previously existed, clearing out the buffer does not work - I get weird
+      ;; field exists errors
+      (kill-buffer form-buffer))
+    (get-buffer-create form-buffer)
     (with-current-buffer form-buffer
       (let ((inhibit-read-only t))
-        (widget-minor-mode -1)
-        (erase-buffer)
-        (widget-setup))
+        (erase-buffer))
       (widget-minor-mode 1)
-
-      ;; Process data and render the form
+      (setq-local 1password--form-changes '())
+      ;; Form creation
       (let* ((parsed-fields (plist-get record :fields))
              (grouped-fields (1password--fields-by-section parsed-fields))
              (sections (plist-get record :sections)))
@@ -143,32 +170,32 @@ The alist maps field IDs (as strings) to their values."
 
             (1password--section-header section-label)
             (dolist (field fields)
-              (1password--widget-dispatcher field widget-map))))
+              (1password--widget-dispatcher field))))
 
-        (1password--save-button widget-map)
+        (1password--save-button
+         (lambda (&rest _)
+           (1password--save-item record 1password--form-changes)))
         (widget-setup)
         (goto-char (point-min)))
-      ;;(1password-edit-item-mode))
+      (1password-edit-item-mode)
       (switch-to-buffer form-buffer))))
-;;(1password-edit-item-mode))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Major Mode
 ;;;;;;;;;;;;;;;;;;;;;;;;;
-;; (defvar 1password-edit-item-mode-keymap
-;;   (let ((map (make-sparse-keymap)))
-;;     (define-key map (kbd "C-c C-c") '1password--create-form)
-;;     (define-key map (kbd "C-c C-k") 'kill-buffer)
-;;     (define-key map (kbd "C-c C-s") '1password--save-button)
-;;     (define-key map (kbd "q") 'kill-current-buffer)
-;;     map)
-;;   "Keymap for `1password-edit-item-mode'.")
+(defvar-local 1password--form-changes '()
+  "Local variable to track changes in the form.")
 
-;; (define-derived-mode 1password-edit-item-mode special-mode "1Password Edit Item"
-;;   "Major mode for editing 1Password items in a dynamic form."
-;;   :syntax-table nil
-;;   (use-local-map 1password-edit-item-mode-keymap)
-;;   (setq buffer-read-only t)
-;;   (setq truncate-lines t))
+(defvar 1password-edit-item-mode-keymap
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "C-c C-k") 'kill-current-buffer)
+    (define-key map (kbd "C-c C-s") '1password--save-button)
+    (define-key map (kbd "q") 'kill-current-buffer)
+    map)
+  "Keymap for `1password-edit-item-mode'.")
 
-(1password--create-form sample-fields)
+(define-derived-mode 1password-edit-item-mode widget-minor-mode "1Password Edit Item"
+  "Major mode for editing 1Password items in a dynamic form."
+  :syntax-table nil
+  (use-local-map 1password-edit-item-mode-keymap)
+  (setq truncate-lines t))
