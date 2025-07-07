@@ -137,8 +137,7 @@ Fields without a section are grouped under the key ':none'."
     (with-temp-file temp-file
       (let* ((copied-record (copy-sequence record))
              (updated-record (1password--update-fields copied-record changes)))
-        (json-insert updated-record
-                     :null-object :null)
+        (insert (json-encode updated-record))
         (setq-local 1password--form-changes '())
         (kill-current-buffer)))
     temp-file))
@@ -148,7 +147,7 @@ Fields without a section are grouped under the key ':none'."
   (interactive "sEnter JSON form definition: ")
   (let* ((record (parse-json-to-plist json-string))
          (form-buffer (format "*1password: %s*" (plist-get record :title))))
-    ;; Buffer setup)
+    ;; Buffer setup
     (when (get-buffer form-buffer)
       ;; Remove buffer if it previously existed, clearing out the buffer does not work - I get weird
       ;; field exists errors
@@ -199,3 +198,7 @@ Fields without a section are grouped under the key ':none'."
   :syntax-table nil
   (use-local-map 1password-edit-item-mode-keymap)
   (setq truncate-lines t))
+
+;; (1password--create-form sample-fields)
+
+(provide '1password-widget-builder)
