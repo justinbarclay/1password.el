@@ -144,7 +144,6 @@ Fields without a section are grouped under the key ':none'."
 
 (defun 1password--create-form (json-string)
   "Create and display a dynamic form based on JSON-STRING."
-  (interactive "sEnter JSON form definition: ")
   (let* ((record (parse-json-to-plist json-string))
          (form-buffer (format "*1password: %s*" (plist-get record :title))))
     ;; Buffer setup
