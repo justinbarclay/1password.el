@@ -228,6 +228,64 @@ You can use `1password-search-id' to find the id for of an entry."
 ;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Candidate Formatting
 ;;;;;;;;;;;;;;;;;;;;;;;;;
+(defun 1password--nested-get (fields candidate &optional dflt)
+  (if (stringp fields)
+      (plist-get candidate fields)
+    (or (cl-reduce (lambda (field field-name)
+                     (and
+                      field
+                      (plist-get field field-name)))
+                   fields
+                   :initial-value candidate)
+        dflt)))
+
+(defun 1password--nested-put-helper (fields value candidate)
+  (if (= (length fields) 1)
+      (progn
+        (plist-put candidate (car fields) value)
+        candidate)
+    (let ((field (or (plist-get candidate (car fields))
+                     '())))
+      (plist-put candidate
+                 (car fields)
+                 (1password--nested-put-helper (cdr fields)
+                                               value
+                                               field))
+      candidate)))
+
+(defun 1password--nested-put (fields value candidate)
+  (if (stringp fields)
+      (progn
+        (plist-put candidate fields value)
+        candidate)
+    (1password--nested-put-helper fields
+                                  value
+                                  candidate)))
+
+(defun 1password--max-candidate-lengths (candidates fields)
+  "Return a hash-table of the max length of each `FIELDS' in `CANDIDATES'.
+
+- `CANDIDATES' is a plist
+- `FIELDS' is a list of fields to check for the max length"
+  (cl-reduce (lambda (acc candidate)
+               (dolist (field fields)
+                 (if (listp field)
+                     (1password--nested-put field
+                                            (max
+                                             (1password--nested-get field acc 0)
+                                             (length (1password--nested-get field candidate "")))
+                                            acc)
+                   (plist-put acc
+                              field
+                              (max
+                               (or (plist-get acc field)
+                                   0)
+                               (length (or (plist-get candidate field)
+                                           ""))))))
+               acc)
+             candidates
+             :initial-value '()))
+
 (defun 1password-colour-formatter (results)
   "Format the cached `RESULTS' from 1Password for Minibuffer Completion."
   (let* ((fields '("title" "additional_information" ("vault" "name")))
