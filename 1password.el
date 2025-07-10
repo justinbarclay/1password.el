@@ -126,11 +126,11 @@ and return from the entry that matches `ID-OR-NAME'.
 
 (defun 1password--find-vault (id)
   "Search `1password--item-cache' for the vault name of the entry with `ID'."
-  (thread-last (cl-find id 1password--item-cache :test
-                        (lambda (target item)
-                          (eq (gethash "id" item) target)))
-               (gethash "vault")
-               (gethash "name")))
+  (thread-first (cl-find id 1password--item-cache :test
+                         (lambda (target item)
+                           (eq (plist-get :item id) target)))
+                (plist-get :vault)
+                (plist-get :name)))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; 1Password Auth Source
@@ -239,7 +239,8 @@ You can use `1password-search-id' to find the id for of an entry."
                  (lambda (field)
                    (let* ((format-string (string-join
                                           (list "%-"
-                                                (number-to-string (gethash field spacings 0))
+                                                (number-to-string (or (plist-get spacings field)
+                                                                      0))
                                                 "s")))
                           (formatted-string (format format-string
                                                     (1password--nested-get field candidate ""))))
@@ -253,7 +254,7 @@ You can use `1password-search-id' to find the id for of an entry."
                                         (t 'default)))))
                  fields)
                 " ")
-               (gethash "id" candidate)))
+               (plist-get candidate :id)))
             results)))
 
 (defun 1password-default-formatter (results)
@@ -261,8 +262,8 @@ You can use `1password-search-id' to find the id for of an entry."
   (mapcar
    (lambda (response)
      (list
-      (gethash "title" response)
-      (gethash "id" response)))
+      (plist-get response :title)
+      (plist-get response :id)))
    results))
 
 (aio-defun 1password-show-item-details ()
@@ -382,14 +383,6 @@ You can use `1password-search-id' to find the id for of an entry."
          (vault (1password--find-vault id)))
     (aio-await (1password--delete id vault))
     (message "1Password entry deleted")))
-
-;; (aio-defun 1password-generate-password ()
-;;   "Generates a random password using 1Password"
-;;   (interactive)
-;;   (let* ((response (1password--item-create "thing" nil 't)))
-;;     (password (gethash "password" response)))
-;;   (kill-new password)
-;;   (message "1Password generated password copied to clipboard"))
 
 ;; TODO: Add support for custom categories
 ;;;###autoload (autoload '1password-create "1password" nil t)

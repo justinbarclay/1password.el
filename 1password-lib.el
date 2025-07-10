@@ -33,9 +33,17 @@ output of the call to the 1Password CLI.  By default, this is
       (goto-char (point-min))
       (funcall buffer-reader-fn))))
 
+
+(defun 1password--parse-json-string (string)
+  "Parse JSON STRING and return a plist."
+  (let ((json-object-type 'plist))
+    (json-parse-string string
+                       :object-type 'plist
+                       :array-type 'list)))
+
 (cl-defun 1password--execute-async (args
                                     &optional
-                                    (process-parse-fn #'json-parse-string)
+                                    (process-parse-fn #'1password--parse-json-string)
                                     (buffer-name "*1password*"))
   "Run the 1password executable with `ARGS' and return a promise.
 

@@ -137,49 +137,11 @@ This link will be valid for 7Hours."
 ;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; 1Password Get
 ;;;;;;;;;;;;;;;;;;;;;;;;;
-(defun 1password--extract-data (json)
-  "Extract the label and value from each entry in `JSON'.
-
-  1Password returns an array of json objects that contain alot of
-  meta information about the results.  As a plist this could look
-  like:
-
-  ((:id \"username\"
-    :type \"STRING\"
-    :purpose \"USERNAME\"
-    :label \"username\"
-    :value \"githubapi@justinbarclay.ca\"
-    :reference \"op://Private/api.github.com/username\")
-   (:id \"password\"
-    :type \"CONCEALED\"
-    :purpose \"PASSWORD\"
-    :label \"password\"
-    :value \"JMH73PktuQK4eCPAvPvc\"
-    :entropy 115.5291519165039
-    :reference \"op://Private/api.github.com/password\"
-    :password_details (:entropy 115
-                       :generated t
-                       :strength \"FANTASTIC\")))
-
-  When what really matters for auth integration is the `label'
-  and `value'
-
-  (list :username \"githubapi@justinbarclay.ca\"
-        :password \"JMH73PKTUQK4ECPAVPVC\")
-
-  In reality, we use a hash table to store the data, but it's
-  easier to visualize a plist."
-  (mapcan
-   (lambda (response)
-     (list (intern (concat ":" (gethash "label" response)))
-           (gethash "value" response)))
-   json))
-
 (aio-defun 1password--item-get (item-id)
   "Fetch details for ITEM-ID using 'op item get --format json'."
   (let ((args (string-join (list "item" "get" item-id "--format" "json") " ")))
     ;; Use json-parse-string to get a parsed Lisp object directly
-    (aio-await (1password--execute-async args #'json-parse-string))))
+    (aio-await (1password--execute-async args))))
 
 (aio-defun 1password--item-edit (item-id assignments)
   "Edit ITEM-ID using 'op item edit' with field ASSIGNMENTS.
