@@ -35,18 +35,6 @@ Fields without a section are grouped under the key ':none'."
             (nreverse grouped-fields))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;
-;; The rest
-;;;;;;;;;;;;;;;;;;;;;;;;;
-
-;; Parse this json to plist
-(defun parse-json-to-plist (json-string)
-  "Parse JSON STRING and return a plist."
-  (let ((json-object-type 'plist))
-    (json-parse-string json-string
-                       :object-type 'plist
-                       :array-type 'list)))
-
-;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Components
 ;;;;;;;;;;;;;;;;;;;;;;;;;
 

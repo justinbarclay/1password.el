@@ -139,7 +139,7 @@ This link will be valid for 7Hours."
 ;;;;;;;;;;;;;;;;;;;;;;;;;
 (aio-defun 1password--item-get (item-id)
   "Fetch details for ITEM-ID using 'op item get --format json'."
-  (let ((args (string-join (list "item" "get" item-id "--format" "json") " ")))
+  (let ((args (list "item" "get" item-id "--format" "json")))
     ;; Use json-parse-string to get a parsed Lisp object directly
     (aio-await (1password--execute-async args))))
 
