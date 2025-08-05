@@ -228,7 +228,7 @@ You can use `1password-search-id' to find the id for of an entry."
 ;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Candidate Formatting
 ;;;;;;;;;;;;;;;;;;;;;;;;;
-(defun 1password--nested-get (fields candidate &optional dflt)
+(defun 1password--nested-get (fields candidate &optional default)
   (if (stringp fields)
       (plist-get candidate fields)
     (or (cl-reduce (lambda (field field-name)
@@ -237,7 +237,7 @@ You can use `1password-search-id' to find the id for of an entry."
                       (plist-get field field-name)))
                    fields
                    :initial-value candidate)
-        dflt)))
+        default)))
 
 (defun 1password--nested-put-helper (fields value candidate)
   (if (= (length fields) 1)
@@ -265,8 +265,8 @@ You can use `1password-search-id' to find the id for of an entry."
 (defun 1password--max-candidate-lengths (candidates fields)
   "Return a hash-table of the max length of each `FIELDS' in `CANDIDATES'.
 
-- `CANDIDATES' is a plist
-- `FIELDS' is a list of fields to check for the max length"
+   - `CANDIDATES' is a plist
+   - `FIELDS' is a list of fields to check for the max length"
   (cl-reduce (lambda (acc candidate)
                (dolist (field fields)
                  (if (listp field)
