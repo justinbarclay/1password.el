@@ -1,6 +1,7 @@
 ;;; 1password-widget-builder.el --- 1password widget builder for editable forms -*- lexical-binding: t; -*-
 (require 'widget)
 (require 'json)
+(require '1password-lib)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; TODO: Rework
@@ -8,7 +9,7 @@
 ;; Define a custom face for section headers
 ;; inherit fontlock-symbol
 (defface 1password-section-header-face
-  '((t :weight bold :height 1.2 :inherit magit-section-heading))
+  '((t :weight bold :height 1.2 :inherit match))
   "Face for section headers in the dynamic form.")
 
 (defun 1password--fields-by-section (field-list)
@@ -74,7 +75,7 @@ Fields without a section are grouped under the key ':none'."
                  :notify on-save
                  "Save and Close"))
 
-(defun 1password--notify-changes (widget &rest _)
+(defun 1password--notify-changes (id widget &rest _)
   (let ((new-value (widget-value widget)))
     (setq-local 1password--form-changes
                 (plist-put 1password--form-changes id new-value))))
@@ -84,20 +85,21 @@ Fields without a section are grouped under the key ':none'."
   (let* ((id  (plist-get field :id))
          (type  (plist-get field :type))
          (label  (plist-get field :label))
-         (value  (plist-get field :value)))
+         (value  (plist-get field :value))
+         (1password--notify-change-with-id (apply-partially #'1password--notify-changes id)))
     (when label
       (widget-insert (format "%-25s " label)))
     (pcase type
       ("STRING"
-       (1password--create-string-widget value #'1password--notify-changes))
-      ("CONCEALED"
-       (1password--create-concealed-widget value #'1password--notify-changes))
+       (1password--create-string-widget value 1password--notify-change-with-id))
+      ;; ("CONCEALED"
+      ;;  (1password--create-concealed-widget value (apply-partially 1password--notify-changes id)))
       ("URL"
-       (1password--create-string-widget value #'1password--notify-changes))
+       (1password--create-string-widget value 1password--notify-change-with-id))
       ("ADDRESS"
-       (1password--create-string-widget value #'1password--notify-changes 't))
+       (1password--create-string-widget value 1password--notify-change-with-id 't))
       ("PHONE"
-       (1password--create-string-widget value #'1password--notify-changes))
+       (1password--create-string-widget value 1password--notify-change-with-id))
       ;; TODO
       ;; Handle Date
       ;;... other type clauses...
@@ -110,13 +112,17 @@ Fields without a section are grouped under the key ':none'."
 (defun 1password--update-fields (record changes)
   "Update the fields in RECORD with CHANGES."
   (let ((fields (plist-get record :fields)))
-    (mapc
-     (lambda (field)
-       (let ((field-id (plist-get field :id)))
-         (if (plist-member changes field-id)
-             (plist-put field :value (plist-get changes field-id))
-           field)))
-     fields))
+    (plist-put record
+               :fields
+               ;; Arrays need to be vectors for JSON encoding
+               (cl-map
+                'vector
+                (lambda (field)
+                  (let ((field-id (plist-get field :id)))
+                    (if (plist-member changes field-id)
+                        (plist-put field :value (plist-get changes field-id))
+                      field)))
+                fields)))
   record)
 
 (defun 1password--save-item (record changes)
@@ -127,14 +133,22 @@ Fields without a section are grouped under the key ':none'."
              (updated-record (1password--update-fields copied-record changes)))
         (insert (json-encode updated-record))
         (setq-local 1password--form-changes '())
-        (kill-current-buffer)))
+        ;; save file
+        (setq-local buffer-save-without-query 't)
+        (write-region nil nil temp-file)))
+    (aio-wait-for (1password--execute-async
+                   (list "item"
+                         "edit"
+                         (plist-get record :id)
+                         "--template" temp-file)))
+
     temp-file))
 
-(defun 1password--create-form (json-string)
-  "Create and display a dynamic form based on JSON-STRING."
-  (let* ((record (parse-json-to-plist json-string))
-         (form-buffer (format "*1password: %s*" (plist-get record :title))))
-    ;; Buffer setup
+(defun 1password--create-form (record)
+  "Create and display a dynamic form based on `RECORD'.
+
+Returns the buffer name."
+  (let ((form-buffer (format "*1password: %s*" (plist-get record :title))))
     (when (get-buffer form-buffer)
       ;; Remove buffer if it previously existed, clearing out the buffer does not work - I get weird
       ;; field exists errors
@@ -145,10 +159,13 @@ Fields without a section are grouped under the key ':none'."
         (erase-buffer))
       (widget-minor-mode 1)
       (setq-local 1password--form-changes '())
+
       ;; Form creation
       (let* ((parsed-fields (plist-get record :fields))
              (grouped-fields (1password--fields-by-section parsed-fields))
-             (sections (plist-get record :sections)))
+             (sections (cons '(:id :none :label "General")
+                             (plist-get record :sections))))
+        ;; Create Sections
         (dolist (section sections)
           (let* ((section-id (plist-get section :id))
                  (section-label (plist-get section :label))
@@ -158,13 +175,15 @@ Fields without a section are grouped under the key ':none'."
             (dolist (field fields)
               (1password--widget-dispatcher field))))
 
+        ;; Create Save Button
         (1password--save-button
          (lambda (&rest _)
            (1password--save-item record 1password--form-changes)))
         (widget-setup)
         (goto-char (point-min)))
       (1password-edit-item-mode)
-      (switch-to-buffer form-buffer))))
+      (switch-to-buffer form-buffer))
+    form-buffer))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Major Mode

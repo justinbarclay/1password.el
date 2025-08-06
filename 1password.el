@@ -31,6 +31,7 @@
 
 (require '1password-lib)
 (require '1password-item)
+(require '1password-widget-builder)
 (require 'aio)
 (require 'auth-source)
 (require 'cl-lib)
@@ -324,21 +325,16 @@ You can use `1password-search-id' to find the id for of an entry."
       (plist-get response :id)))
    results))
 
-(aio-defun 1password-show-item-details ()
+(defun 1password-show-item-details ()
   "Fetch and display details for the 1Password item on the current line using widgets."
   (interactive)
   (let ((item-id (tabulated-list-get-id)))
     (when item-id
-      (message "Fetching details for %s..." item-id)
-      (let ((details (aio-await (1password--item-get item-id)))) ; details should be a parsed Lisp object (hash-table)
-        (message "%s" details)
+      (let ((details (aio-wait-for (1password--item-get item-id)))) ; details should be a parsed Lisp object (hash-table)
         ;; Ensure details is a hash-table before proceeding
-        (unless (hash-table-p details)
-          (error "Failed to parse item details for %s. Expected hash-table, got: %S" item-id details))
-        (1password-build-item-view details item-id)
-
-        (pop-to-buffer details-buffer)
-        (message "Displaying details for %s in editable form." item-title)))))
+        (unless (json-plist-p details)
+          (error "Failed to parse item details for %s. Expected plist, got: %S" item-id details))
+        (1password--create-form details)))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; User Commands
