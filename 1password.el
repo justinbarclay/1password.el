@@ -340,9 +340,23 @@ You can use `1password-search-id' to find the id for of an entry."
 ;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; User Commands
 ;;;;;;;;;;;;;;;;;;;;;;;;;
+(defvar 1password-transient--vault "" "Vault for transient command.")
+(defvar 1password-transient--id "" "ID for transient command.")
+(defvar 1password-transient--category "Login" "Category for transient command.")
+(defvar 1password-transient--email "" "Email for transient command.")
+
+(put '1password-transient--category 'transient--read
+     (lambda (prompt _initial-input)
+       (completing-read prompt 1password--categories nil t nil nil 1password-transient--category)))
+
 ;;;###autoload (autoload '1password "1password" nil t)
 (transient-define-prefix 1password ()
   "Transient commands for 1Password."
+  ["Arguments"
+   ("-v" "Vault"    1password-transient--vault)
+   ("-i" "ID"       1password-transient--id)
+   ("-c" "Category" 1password-transient--category)
+   ("-e" "Email"    1password-transient--email)]
   ["Item"
    ("c" "Create" 1password-create)
    ("d" "Delete" 1password-delete)
@@ -358,7 +372,10 @@ You can use `1password-search-id' to find the id for of an entry."
 (aio-defun 1password-list ()
   "List all 1Password items using tabulated-list-mode."
   (interactive)
-  (let* ((items (aio-await (1password--item-list))) ; Use non-cached version for freshness
+  (let* ((vault (if (and (transient-active-p '1password) (not (string-empty-p 1password-transient--vault)))
+                          1password-transient--vault
+                        nil))
+         (items (aio-await (1password--item-list vault))) ; Use non-cached version for freshness
          (buffer-name "*1Password Items*")
          ;; Define columns: Name, Width, Sortable (nil means not sortable by clicking header)
          (tabulated-list-format
@@ -414,10 +431,15 @@ You can use `1password-search-id' to find the id for of an entry."
 (aio-defun 1password-share ()
   "Shares the selected 1Password entry to the specified entry."
   (interactive)
-  (let* ((id (aio-await (1password--search-id)))
+  (let* ((from-transient (transient-active-p '1password))
+         (id (if (and from-transient (not (string-empty-p 1password-transient--id)))
+                 1password-transient--id
+               (aio-await (1password--search-id))))
+         (email (if (and from-transient (not (string-empty-p 1password-transient--email)))
+                    1password-transient--email
+                  (read-string "Email: ")))
          (response (aio-await
-                    (1password--share id
-                                      (read-string "Email: ")))))
+                    (1password--share id email))))
     (if response
         (progn
           (kill-new response)
@@ -436,8 +458,13 @@ You can use `1password-search-id' to find the id for of an entry."
 (aio-defun 1password-search-password ()
   "Search for password by entry name."
   (interactive)
-  (let* ((id (aio-await (1password--search-id)))
-         (vault (1password--find-vault id))
+  (let* ((from-transient (transient-active-p '1password))
+         (id (if (and from-transient (not (string-empty-p 1password-transient--id)))
+                 1password-transient--id
+               (aio-await (1password--search-id))))
+         (vault (if (and from-transient (not (string-empty-p 1password-transient--vault)))
+                    1password-transient--vault
+                  (1password--find-vault id)))
          (result (aio-await (1password--read id
                                              "password"
                                              vault))))
@@ -451,8 +478,13 @@ You can use `1password-search-id' to find the id for of an entry."
 (aio-defun 1password-delete ()
   "Deletes the selected 1password entry."
   (interactive)
-  (let* ((id (aio-await (1password--search-id)))
-         (vault (1password--find-vault id)))
+  (let* ((from-transient (transient-active-p '1password))
+         (id (if (and from-transient (not (string-empty-p 1password-transient--id)))
+                 1password-transient--id
+               (aio-await (1password--search-id))))
+         (vault (if (and from-transient (not (string-empty-p 1password-transient--vault)))
+                    1password-transient--vault
+                  (1password--find-vault id))))
     (aio-await (1password--delete id vault))
     (message "1Password entry deleted")))
 
@@ -461,8 +493,11 @@ You can use `1password-search-id' to find the id for of an entry."
   "Create a new 1Password entry for the Login category.
 This method generates defers to 1Password to generate a password using the options '20,letters,digits'"
   (interactive)
-  (let* ((template-file (make-temp-file "1password-create.json"))
-         (template-buffer (aio-await (1password--fetch-template "Login" template-file))))
+  (let* ((category (if (transient-active-p '1password)
+                       1password-transient--category
+                     (completing-read "Category: " 1password--categories nil t nil nil "Login")))
+         (template-file (make-temp-file "1password-create.json"))
+         (template-buffer (aio-await (1password--fetch-template category template-file))))
     (1password--update-template template-buffer)
     (if (aio-await (1password--create template-buffer template-file))
         (message "1Password entry created")
