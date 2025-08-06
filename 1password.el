@@ -411,7 +411,7 @@ You can use `1password-search-id' to find the id for of an entry."
     (if response
         (progn
           (kill-new response)
-          (message "1Password share link copied to clipboard"))
+          (message "1Password share link copied to kill-ring"))
       (message "1Password entry not found or does not contain a share link"))))
 
 
@@ -447,17 +447,15 @@ You can use `1password-search-id' to find the id for of an entry."
     (aio-await (1password--delete id vault))
     (message "1Password entry deleted")))
 
-;; TODO: Add support for custom categories
 ;;;###autoload (autoload '1password-create "1password" nil t)
 (aio-defun 1password-create ()
   "Create a new 1Password entry for the Login category.
-
 This method generates defers to 1Password to generate a password using the options '20,letters,digits'"
   (interactive)
   (let* ((template-file (make-temp-file "1password-create.json"))
          (template-buffer (aio-await (1password--fetch-template "Login" template-file))))
     (1password--update-template template-buffer)
-    (if (aio-await (1password--create template-bugger template-file))
+    (if (aio-await (1password--create template-buffer template-file))
         (message "1Password entry created")
       (message "Unable to create 1Password entry"))))
 

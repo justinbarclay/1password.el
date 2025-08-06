@@ -47,18 +47,18 @@
 (aio-defun 1password--fetch-template (category &optional buffer-name)
   "Fetches the `op' template for the chosen `CATEGORY'."
   (let ((template-buffer (get-buffer-create (or buffer-name
-                                                "*1password-template*"))))
-    (aio-await (1password--execute-async
-                (string-join (list
-                              "item"
-                              "template"
-                              "get"
-                              category
-                              "--format"
-                              "json")
-                             " ")
-                'identity
-                template-buffer))
+                                                "*1password-template*")))
+        (response (aio-await (1password--execute-async
+                              (list
+                               "item"
+                               "template"
+                               "get"
+                               category
+                               "--format"
+                               "json")
+                              'identity))))
+    (with-current-buffer template-buffer
+      (insert response))
     template-buffer))
 
 (defun 1password--update-template-fields (fields)
@@ -78,27 +78,24 @@
   (with-current-buffer template-buffer
     (set-visited-file-name template-file 'nil)
     (setq buffer-save-without-query 't)
-    (write-region
-     nil
-     nil
-     template-file))
+    (write-region nil nil template-file))
+  ;; Clear cache and return result
+  (setq 1password--item-cache nil)
   (aio-await
    (1password--execute-async
-    (string-join (list
-                  "item"
-                  "create"
-                  "--template"
-                  template-file
-                  "--generate-password=20,letters,digits")
-                 " ")
-    'identity))
-  ;; Clear cache and return result
-  (setq 1password--item-cache nil))
+    (list
+     "item"
+     "create"
+     "--template"
+     template-file
+     "--generate-password=20,letters,digits")
+    'identity)))
 
 (defun 1password--update-template (template-buffer)
   "Update the `TEMPLATE-BUFFER' with user supplied values."
   (with-current-buffer template-buffer
-    (setq template (json-parse-buffer))
+    (setq template (json-parse-string (buffer-substring-no-properties (point-min)
+                                                                      (point-max))))
     (puthash "title" (read-string "Entry name: ") template)
     (puthash "fields"
              (apply 'vector
