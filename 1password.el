@@ -38,6 +38,7 @@
 (require 'json)
 (require 'subr-x)
 (require 'tabulated-list)
+(require 'transient)
 
 (defgroup 1password nil
   "1Password integration for Emacs."
