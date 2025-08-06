@@ -128,7 +128,7 @@ and return from the entry that matches `ID-OR-NAME'.
   "Search `1password--item-cache' for the vault name of the entry with `ID'."
   (thread-first (cl-find id 1password--item-cache :test
                          (lambda (target item)
-                           (eq (plist-get :item id) target)))
+                           (eq (plist-get item :id) target)))
                 (plist-get :vault)
                 (plist-get :name)))
 
@@ -442,7 +442,6 @@ You can use `1password-search-id' to find the id for of an entry."
   "Deletes the selected 1password entry."
   (interactive)
   (let* ((id (aio-await (1password--search-id)))
-         (message "%s" id)
          (vault (1password--find-vault id)))
     (aio-await (1password--delete id vault))
     (message "1Password entry deleted")))
