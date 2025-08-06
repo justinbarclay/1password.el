@@ -122,13 +122,11 @@
 (aio-defun 1password--share (item-id email)
   "Generate a link for `ITEM-ID' that is valid for the given `EMAIL'.
 
-This link will be valid for 7Hours."
-  (let ((args (string-join
-               (list "item"
-                     "share"
-                     item-id
-                     "--emails" email)
-               " ")))
+This link will be valid for 7 Hours."
+  (let ((args (list "item"
+                    "share"
+                    item-id
+                    "--emails" email)))
     (aio-await (1password--execute-async args 'identity))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;

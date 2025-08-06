@@ -403,7 +403,6 @@ You can use `1password-search-id' to find the id for of an entry."
 (aio-defun 1password-share ()
   "Shares the selected 1Password entry to the specified entry."
   (interactive)
-
   (let* ((id (aio-await (1password--search-id)))
          (response (aio-await
                     (1password--share id
@@ -411,7 +410,7 @@ You can use `1password-search-id' to find the id for of an entry."
     (if response
         (progn
           (kill-new response)
-          (message "1Password share link copied to kill-ring"))
+          (message "1Password share link copied to kill-ring. This link will be valid for 7 hours."))
       (message "1Password entry not found or does not contain a share link"))))
 
 
