@@ -468,7 +468,6 @@ This method generates defers to 1Password to generate a password using the optio
         (message "1Password entry created")
       (message "Unable to create 1Password entry"))))
 
-
 ;; Local Variables:
 ;; read-symbol-shorthands: (("op-" . "1password-"))
 ;; End:
