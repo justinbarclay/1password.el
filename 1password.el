@@ -340,6 +340,20 @@ You can use `1password-search-id' to find the id for of an entry."
 ;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; User Commands
 ;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;###autoload (autoload '1password "1password" nil t)
+(transient-define-prefix 1password ()
+  "Transient commands for 1Password."
+  ["Item"
+   ("c" "Create" 1password-create)
+   ("d" "Delete" 1password-delete)
+   ("l" "List" 1password-list)
+   ("p" "Search password" 1password-search-password)
+   ("i" "Search id" 1password-search-id)
+   ("s" "Share" 1password-share)]
+  ["Authentication"
+   ("a" "Enable auth-source" 1password-enable-auth-source)
+   ("A" "Disable auth-source" 1password-disable-auth-source)])
+
 ;;;###autoload (autoload '1password-list "1password" nil t)
 (aio-defun 1password-list ()
   "List all 1Password items using tabulated-list-mode."
