@@ -420,7 +420,7 @@ You can use `1password-search-id' to find the id for of an entry."
   "Search for 1Password id by entry name by title."
   (interactive)
   (kill-new (aio-await (1password--search-id)))
-  (message "1Password ID copied to clipboard"))
+  (message "1Password ID copied to kill-ring"))
 
 ;;;###autoload (autoload '1password-search-password "1password" nil t)
 (aio-defun 1password-search-password ()
@@ -434,7 +434,7 @@ You can use `1password-search-id' to find the id for of an entry."
     (if result
         (progn
           (kill-new result)
-          (message "1Password secret copied to clipboard"))
+          (message "1Password secret copied to kill-ring"))
       (message "1Password entry not found or does not contain a password"))))
 
 ;;;###autoload (autoload '1password-delete "1password" nil t)
