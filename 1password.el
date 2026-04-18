@@ -194,8 +194,8 @@ Then if we called:
       ids)))
 
 (cl-defun 1password--auth-source-search (&rest spec
-                                         &key host id
-                                         &allow-other-keys)
+                                               &key host id
+                                               &allow-other-keys)
   "Execute 1Passwords `get item' command on the `HOST' or `ID' key.
 
 If both `ID' and `HOST' are specified in `SPEC',
@@ -382,7 +382,6 @@ You can use `1password-search-id' to find the id for of an entry."
   "Deletes the selected 1password entry."
   (interactive)
   (let* ((id (aio-await (1password--search-id)))
-         (message "%s" id)
          (vault (1password--find-vault id)))
     (aio-await (1password--delete id vault))
     (message "1Password entry deleted")))
