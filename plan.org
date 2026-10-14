@@ -1,0 +1,1011 @@
+#+title: 1password.el — Project Plan
+#+date: <2026-07-02 Thu>
+
+* TODO Next session (written 2026-07-02)
+** Your fixes (core files — Claude describes, you author)
+- [ ] =1password-lib.el=: make the =1password--execute-async= sentinel
+  *reject* the promise on failure — resolve it with a value function
+  that re-signals — instead of calling =error= inside the sentinel.
+  Evidence: run =emacs -Q --batch -l sentinel-hang-demo.el= (Part 1 =
+  today's behavior, Part 2 = the contract-following fix).  Per the aio
+  README, rebuilding on =aio-make-callback= is the blessed alternative.
+- [ ] =1password.el=: =1password--find-vault= compares string IDs with
+  =eq=, so it always returns nil → =op://nil/...= paths.  Use content
+  equality (=equal=).
+- [ ] =1password.el=: =1password-delete= has a =(message "%s" id)= sitting
+  *inside* the =let*= binding list — hard compile error.  Same pattern in
+  =1password--delete= (=1password-item.el=), where it silently shadows
+  =message=.  Move both into the bodies.
+- [ ] =1password.el=: =1password-create= awaits =template-bugger= (typo for
+  =template-buffer=) — void-variable on every run.
+- [ ] Optional (=1password-lib.el=): the =buffer-name= parameter of
+  =1password--execute-async= is accepted but unused; =--fetch-template=
+  relies on it and so gets an empty buffer.  Either honor it or drop it
+  and have =--fetch-template= insert the promise result itself.
+
+** Environment (needed before the age module can run)
+- [ ] Install age.el (MELPA: =age=) and a =rage= or =age= binary — Linux
+  side via nix on this WSL box (a Windows =rage.exe= can't read =/home=
+  paths).
+
+** Verify together
+- [ ] Smoke-test =1password-age.el= end to end: =1password-age-mode= on,
+  =C-x C-f= an =.age= file (decrypt via 1Password SSH key), save it
+  (encrypt via raw pubkey), plus the explicit
+  =1password-age-encrypt-file= / =decrypt-file= commands.
+- [ ] Confirm the sentinel fix by re-running the demo against the real
+  lib path, then delete =sentinel-hang-demo.el=.
+
+** Then (plan priorities, in order)
+- [ ] Public sync-with-timeout API: =1password-get-secret= (trimmed
+  output, cache TTL, =1password-refresh-cache=).
+- [ ] Menu-first =1password-menu= transient (copy password/username/OTP,
+  create, archive, share; list buffer as a suffix).
+- [ ] Item view buffer with fetch-on-reveal + field-at-point edit; then
+  create — the full-CRUD v1 line for MELPA.
+
+** Housekeeping
+- [ ] Untracked in git: =plan.org=, =sentinel-hang-demo.el=, =.claude/= —
+  decide what gets committed/ignored; =1password-age.el= rewrite is
+  staged-but-modified (=AM=).
+
+* Design Record — grilling session (2026-07-02)
+Decisions made interactively; each was chosen over explicit alternatives, so
+treat these as settled unless something falsifies their premises.
+
+** Decisions
+| Question           | Decision                                                                                                                            |
+|--------------------+-------------------------------------------------------------------------------------------------------------------------------------|
+| Audience           | GitHub-installable now → MELPA once minimally usable by everyone                                                                     |
+| Public API         | Sync with timeout: =accept-process-output= loop, ~C-g~-able, clean error instead of a hang                                           |
+| Async layer        | Keep =aio= internally; the sync API wraps it at the boundary                                                                         |
+| Edit model         | Field-at-point: ~e~ on a field → minibuffer → one =op item edit 'field=value'= (no diff engine)                                      |
+| Secrets in buffers | Fetch-on-reveal: concealed values never rendered until ~TAB~ on that field                                                           |
+| Entry point        | Menu-first: =1password-menu= transient is the front door; verbs pick items via =completing-read=; list buffer is a suffix, not home  |
+| v1 / MELPA line    | Full CRUD: view, edit, and create all work in buffers before MELPA                                                                   |
+
+** Accepted consequences
+- Full CRUD v1 puts *create* on the critical path: 17 category templates with
+  different field sets, =op item create --template=, generate-password flags.
+  Menu-first helps — create is the one genuinely flag-shaped verb.
+- Field-at-point edit still requires the item *view buffer* (point needs a
+  field to sit on); it is reached via a menu verb rather than being the front
+  door. Only the list buffer got demoted.
+- Fetch-on-reveal wrinkle: =op item get --format json= returns concealed
+  values whether you want them or not. The renderer must fetch, strip
+  concealed values before inserting into the buffer, and let ~TAB~ re-fetch a
+  single field via =op read=. The secret briefly transits process memory but
+  never buffer text.
+
+** Priorities (updated 2026-07-02)
+1. *1password-age* — the most useful module to Justin right now. It is
+   acceptable to rip out the current age support and replace it with a fully
+   regenerated implementation; the rage/age plan below is the design input
+   for that rewrite.
+2. Correctness fixes in the core (=1password-delete= compile error,
+   =template-bugger= typo, =--fetch-template= never filling its buffer,
+   string-vs-list args, sentinel that hangs promises instead of rejecting).
+3. Public sync-with-timeout API (=1password-get-secret=), trimmed output,
+   cache TTL + refresh.
+4. Menu-first transient, then item view (fetch-on-reveal) + field-at-point
+   edit, then create — the full-CRUD v1 line for MELPA.
+
+** Open questions (left on the grill)
+- Does the auth-source backend work against real consumers? forge sends
+  =:user=, mu4e sends =:port=; the backend ignores both and returns at most
+  one result. MELPA users will hit this.
+- Kill-ring hygiene: auto-clear copied secrets after ~45s without clobbering
+  unrelated kills.
+* Plan: 1Password + Rage Decryption in Emacs
+** Problem Statement
+The existing =1password-age.el= handles age/rage encryption using *SSH keys* stored in 1Password. This plan explores adding support for rage's native age identity keys (=AGE-SECRET-KEY-1...=) and the various ways to securely bridge 1Password key retrieval with rage decryption in Emacs.
+
+--------------
+
+** Background: Rage Key Types
+Rage supports three identity formats for =-i=:
+
+1. *Native age keys* --- generated by =rage-keygen=; look like =AGE-SECRET-KEY-1...=
+2. *SSH private keys* --- =ssh-ed25519=, =ssh-rsa= (already handled in the codebase)
+3. *Plugin identities* --- e.g., =age-plugin-yubikey=
+
+Rage's =-i -= flag reads the identity from *stdin*, which is the key insight for secure piping. Rage's =[INPUT]= positional arg must be a *file path* (not stdin) when =-i -= is used.
+
+--------------
+
+** Part 1: How to Store the Key in 1Password
+Four storage strategies. All are retrievable with =op read= or =op item get=.
+
+*** 1A. Password Item --- key in the =password= field
+#+begin_example
+op item create --category=Password --title="rage-identity" \
+  password="AGE-SECRET-KEY-1..."
+#+end_example
+
+Retrieve: =op read "op://vault/rage-identity/password"=
+
+*Pros:*
+
+- Simplest to set up; 1Password's native password strength meter applies
+- Retrieve with existing =1password--read= infrastructure
+
+*Cons:*
+
+- Semantically odd; password items are meant for passwords, not crypto keys
+- Key may be masked/truncated in the 1Password UI
+
+--------------
+
+*** 1B. Secure Note --- key in a custom field
+#+begin_example
+op item create --category="Secure Note" --title="rage-identity" \
+  "age_identity[password]=AGE-SECRET-KEY-1..."
+#+end_example
+
+Retrieve: =op item get <id> --fields label=age_identity=
+
+*Pros:*
+
+- Semantically correct: it's a secret note, not a password
+- Custom field label makes intent clear
+
+*Cons:*
+
+- Slightly more verbose CLI setup
+- Requires adapting =1password--read= to use =--fields label=...= instead of a path
+
+--------------
+
+*** 1C. Document Item --- entire identity file as a document
+#+begin_example
+op document create key.txt --title="rage-identity-file" --vault=Private
+#+end_example
+
+Retrieve: =op document get <id>= (outputs raw file contents)
+
+*Pros:*
+
+- Maps perfectly to what rage =-i IDENTITY= expects (a file path)
+- Can store multi-key identity files natively
+- Supports a full age identity file with comments (=# created: ...=, =# public key: ...=)
+
+*Cons:*
+
+- =op document get= is a different command path than =op read= --- needs a separate code path
+- Larger overhead per retrieval (uploads/downloads as a document)
+- Cache invalidation and listing Documents vs Items is a separate concern
+
+--------------
+
+*** 1D. SSH Key Item --- use 1Password's native SSH key category (existing)
+Already implemented in =1password-age.el=. Rage supports SSH keys natively.
+
+*Pros:*
+
+- Already works; =private_key= and =public_key= fields are standardized
+- 1Password enforces key format validation
+
+*Cons:*
+
+- Only covers SSH key identities, not native age keys
+- Locks you into SSH-based encryption even when native age keys are preferable
+
+--------------
+
+** Part 2: How to Pass the Key to Rage
+This is the most security-critical dimension. Five strategies.
+
+*** 2A. Temp file in =/dev/shm/= (current approach)
+Write the key to a memory-backed tmpfs file, pass =-i /dev/shm/1password-age-XXXXXX= to rage, then securely delete it. The key can be written by Emacs directly or via =op read --out-file=; both produce the same end state (a temp file in =/dev/shm=) and have equivalent security properties. The "bypasses Emacs memory" distinction between those two write paths is not meaningful --- if an attacker can read Emacs's heap, they can also read =/dev/shm=.
+
+Already implemented in =1password-age--make-temp-file= / =1password-age--secure-delete-file=.
+
+*Pros:*
+
+- Simple; rage reads it like any file
+- =/dev/shm= is RAM-backed on Linux --- key never written to spinning disk/SSD
+- Works with =age.el='s existing =age-default-identity= mechanism
+- Error handling is straightforward (unwind-protect)
+
+*Cons:*
+
+- Key briefly exists as a filesystem entry (attackable via =/proc/<pid>/fd/= or directory listing)
+- =/dev/shm= not available on macOS (falls back to =/tmp= which IS on disk)
+- Secure overwrite before deletion is best-effort; SSDs may not honor it
+- Race condition window between write and rage reading (tiny, but non-zero)
+- Relies on =kill-emacs-hook= for cleanup; crashes skip this
+
+*Windows:* =/dev/shm= does not exist. The existing fallback to =temporary-file-directory= silently degrades to writing the key to =%TEMP%= on disk --- effectively becoming approach 2B. Additionally, =set-file-modes= with =#o600= is a no-op on Windows (Windows uses ACLs, not POSIX permission bits), so the key file will have default permissions. On Windows this approach provides no meaningful security above 2B.
+
+--------------
+
+*** 2B. Temp file in =/tmp= / =%TEMP%=
+Same as 2A but without the memory-backed benefit.
+
+*Pros:*
+
+- Cross-platform --- works on Linux, macOS, and Windows via =temporary-file-directory=
+- Already handled by the codebase's fallback logic
+
+*Cons:*
+
+- Key written to disk; exists in filesystem cache, potentially in swap
+- Secure deletion is near-impossible on SSDs (wear-leveling means zeros don't overwrite)
+- *Not recommended* --- use only as a last resort when no RAM-backed option is available
+
+*Windows:* Works. =temporary-file-directory= resolves to =%TEMP%=. File permission hardening via =set-file-modes= does nothing --- the file inherits the user's default ACL. The "secure overwrite" step in =1password-age--secure-delete-file= has no meaningful effect on NTFS with SSDs either.
+
+--------------
+
+*** 2C. Pipe via stdin (=rage -d -i - encrypted.age=)
+Retrieve the key string from 1Password, then pass it directly to rage's stdin process pipe. Rage reads the identity from stdin; the ciphertext comes from the file path argument.
+
+#+begin_example
+echo "AGE-SECRET-KEY-1..." | rage -d -i - -o output.txt input.age
+#+end_example
+
+From Emacs using =make-process=:
+
+#+begin_src elisp
+(let ((proc (make-process
+             :name "rage-decrypt"
+             :command `("rage" "-d" "-i" "-" "-o" ,output ,input)
+             :sentinel sentinel-fn)))
+  (process-send-string proc private-key)
+  (process-send-eof proc))
+#+end_src
+
+*Pros:*
+
+- *Key never touches disk* --- purest solution
+- No temp file management, no race conditions
+- Works on all platforms including macOS and Windows
+- Straightforward cleanup (no files to delete)
+
+*Cons:*
+
+- Cannot use =age.el='s =age-make-context= / =age-decrypt-string= --- must call rage directly
+- Slight API complexity: process must be set up before key is sent
+- stdin can only carry one identity; for multiple identities need a different approach
+- =process-send-string= sends key through Emacs's own pipe buffer (key is briefly in Emacs's memory, but it already was there)
+
+*Windows:* Works. Emacs's =make-process= uses anonymous Win32 pipes on Windows, and =process-send-eof= correctly closes the write end of the pipe. Rage is a Rust binary and handles cross-platform stdin correctly. The one risk is line endings: ensure the key string uses =\n= not =\r\n= (rage's parser should handle both, but native age keys do not contain newlines mid-string anyway). This is the *recommended approach on all platforms including Windows*.
+
+#+begin_quote
+*Recommended for native age keys* --- best security/simplicity tradeoff on all platforms.
+#+end_quote
+
+--------------
+
+*** 2D. Named pipe (FIFO / =mkfifo= on Unix; Named Pipe on Windows)
+The concept: create a pipe that rage reads as a file path via =-i PATH=, write the key into it from a second concurrent process, and never create a real file on disk.
+
+**** Unix (mkfifo)
+#+begin_src sh
+mkfifo -m 600 /tmp/rage-identity-pipe
+# rage blocks on open until a writer connects
+rage -d -i /tmp/rage-identity-pipe -o output.txt input.age &
+printf '%s' "$KEY" > /tmp/rage-identity-pipe
+rm /tmp/rage-identity-pipe
+#+end_src
+
+From Emacs the coordination is awkward because Emacs is single-threaded. You cannot simply write to the FIFO and start rage sequentially --- one blocks waiting for the other. The solution is to start rage as an async process first, then write to the FIFO:
+
+#+begin_src elisp
+(aio-defun 1password-rage--decrypt-via-fifo (input output private-key)
+  (let* ((fifo-path (make-temp-name "/tmp/rage-identity-")))
+    (call-process "mkfifo" nil nil nil "-m" "600" fifo-path)
+    (unwind-protect
+        (let* ((done (aio-promise))
+               (_rage (make-process
+                       :name "rage-decrypt"
+                       :command `("rage" "-d" "-i" ,fifo-path "-o" ,output ,input)
+                       :sentinel (lambda (_p _e) (aio-resolve done (lambda () t))))))
+          ;; rage is now running and blocking on open() of the FIFO.
+          ;; Write the key from a shell one-liner to avoid blocking the Emacs thread.
+          (call-process "sh" nil nil nil "-c"
+                        (format "printf '%%s' %s > %s"
+                                (shell-quote-argument private-key)
+                                fifo-path))
+          (aio-await done))
+      (when (file-exists-p fifo-path)
+        (delete-file fifo-path)))))
+#+end_src
+
+Note: the =sh -c printf= subprocess still receives the key as a shell argument, which is transiently visible in the process list (=ps aux=). This partially undermines the security gain over the temp file approach. A pure Emacs solution requires Emacs threads or a second async process writing to the FIFO without shell argument exposure.
+
+**** Windows (Named Pipes via PowerShell)
+Windows Named Pipes live at =\\.\pipe\<name>= and are readable by Rust's =std::fs::File::open=, which means rage's =-i \\.\pipe\rage-identity-XXXX= works. The pipe server must be created before rage tries to open it as a client.
+
+The server side requires Win32 or .NET APIs not available in Emacs Lisp directly. The practical approach is a PowerShell subprocess acting as the pipe server:
+
+#+begin_src elisp
+(aio-defun 1password-rage--decrypt-via-named-pipe-windows (input output private-key)
+  (let* ((pipe-name (format "rage-identity-%s" (random 99999)))
+         (pipe-path (format "\\\\.\\pipe\\%s" pipe-name))
+         ;; PowerShell script: create named pipe server, wait for rage to connect, write key
+         (ps-script
+          (format (concat "$p = New-Object System.IO.Pipes.NamedPipeServerStream('%s',"
+                          "[System.IO.Pipes.PipeDirection]::Out,1,"
+                          "[System.IO.Pipes.PipeTransmissionMode]::Byte,"
+                          "[System.IO.Pipes.PipeOptions]::None);"
+                          "$p.WaitForConnection();"
+                          "$b=[System.Text.Encoding]::UTF8.GetBytes('%s');"
+                          "$p.Write($b,0,$b.Length);$p.Flush();$p.Dispose()")
+                  pipe-name private-key))  ; NOTE: key embedded in PS string — see con below
+         (server-done (aio-promise))
+         (rage-done (aio-promise)))
+    ;; Start pipe server first
+    (make-process :name "rage-pipe-server"
+                  :command `("powershell" "-NoProfile" "-Command" ,ps-script)
+                  :sentinel (lambda (_p _e) (aio-resolve server-done (lambda () t))))
+    ;; Then start rage pointing at the named pipe
+    (make-process :name "rage-decrypt"
+                  :command `("rage" "-d" "-i" ,pipe-path "-o" ,output ,input)
+                  :sentinel (lambda (_p _e) (aio-resolve rage-done (lambda () t))))
+    (aio-await rage-done)
+    (aio-await server-done)))
+#+end_src
+
+*Pros (both platforms):*
+
+- Key never persists as a file on disk (pipe is an inode / kernel object only)
+- Passes via =-i PATH=, compatible with all rage versions and SSH keys too
+- Works for multiple identities (create multiple FIFOs/pipes, one per key)
+
+*Cons (both platforms):*
+
+- Complex async coordination: rage must be running before the writer connects
+- Emacs single-threaded model requires a helper subprocess to write without blocking
+- That helper subprocess (sh/powershell) receives the key as a string --- visible in process list or PowerShell command history, partially negating the security benefit
+- Cleanup must handle both the pipe/FIFO and the helper process on error
+- Easily replaced by the stdin approach (2C) with significantly less complexity
+
+*Windows-specific cons:*
+
+- The key is embedded directly in the PowerShell =-Command= string, making it visible in Task Manager → Details → Command Line for the lifetime of the PowerShell process
+- PowerShell startup latency adds ~500ms overhead per decryption
+- Requires PowerShell 3+ (available on Windows 8+; standard on Windows 10/11)
+- =\\.\pipe\name= path must be passed as a Windows-style path; Emacs's path translation (=/= → =\=) must be bypassed for this argument
+
+*Verdict:* On Unix, this is a niche improvement over the temp file but inferior to stdin piping. On Windows, the PowerShell pipe server leaks the key via command line arguments, making it strictly worse than stdin piping (2C) in practice. Use 2C instead on both platforms.
+
+--------------
+
+*** 2E. Environment variable + wrapper script
+Some tools accept keys via env vars. Rage does *not* natively support =AGE_IDENTITY_KEY= or similar. However, you could write a tiny wrapper:
+
+#+begin_src sh
+#!/bin/sh
+echo "$AGE_KEY" | rage -d -i - "$@"
+#+end_src
+
+Then set the env var from Emacs, invoke the wrapper.
+
+*Pros:*
+
+- Decouples Emacs from rage's stdin protocol
+
+*Cons:*
+
+- Env vars are visible in =/proc/<pid>/environ= on Linux --- a *security regression*
+- Wrapper script adds an extra maintenance burden
+- The env var approach is strictly worse than stdin piping
+- *Not recommended*
+
+*Windows:* Partially works but with more problems. The =#!/bin/sh= wrapper requires WSL, Git Bash, or Cygwin. A =.bat= / =.ps1= equivalent is possible but the =%AGE_KEY%= env var is visible to any process running as the same user via WMI or Task Manager → Details → Environment. On Windows there is no =/proc=, but the exposure via WMI is equivalent. Still not recommended.
+
+--------------
+
+** Part 3: Emacs Integration Options
+All integration options below depend on the =rage= binary being available on =PATH=. On Windows this means installing via Scoop (=scoop install main/rage=) and ensuring it is in =exec-path=. The =1password-executable= customvar already handles =op= vs =op.exe=; a similar =rage= vs =rage.exe= check should be added.
+
+*** 3A. Standalone interactive commands (minimal, current style)
+=M-x 1password-rage-decrypt= and =M-x 1password-rage-encrypt= --- prompts for files, retrieves key, runs rage.
+
+*Pros:*
+
+- Already established pattern in =1password-age.el=
+- Simple to understand, no implicit behaviour
+- Transient menu already exists to compose these
+
+*Cons:*
+
+- Manual workflow: user must invoke explicitly
+- Decrypted file lands on disk (unless you open into a buffer and avoid writing)
+
+*Windows:* Fully works, provided rage and op are on =exec-path=.
+
+--------------
+
+*** 3B. Extend the existing transient menu
+Add rage native key support to the existing =1password-age-menu= transient:
+
+- New infix for "key type": SSH Key vs Native age key
+- For native keys, show a separate item picker filtered to Password/Secure Note categories
+
+*Pros:*
+
+- Consistent UX with existing tooling
+- Low implementation overhead
+- Users already know the pattern
+
+*Cons:*
+
+- Mixes two conceptually different key types in one menu --- could be confusing
+- Better to add as a separate section or submenu
+
+*Windows:* Fully works. Transient is pure Emacs Lisp.
+
+--------------
+
+*** 3C. Auto-decryption file handler (=file-name-handler-alist=)
+Register a handler for =.age= files. Intercepts =insert-file-contents= and =write-region=. When Emacs opens =foo.age=, it transparently decrypts into the buffer. On save, re-encrypts.
+
+#+begin_src elisp
+(add-to-list 'file-name-handler-alist
+             '("\\.age\\'" . 1password-rage-file-handler))
+#+end_src
+
+This is exactly what =age.el= ([[https://github.com/anticomputer/age.el]]) already does. The integration point is to hook into =age.el='s identity resolution to pull from 1Password.
+
+*Pros:*
+
+- Zero friction --- just =C-x C-f= any =.age= file and it works
+- Re-encrypts on save automatically
+- Consistent with how =epa= handles =.gpg= files
+- =age.el= already implements this; we need only override key resolution
+
+*Cons:*
+
+- Silent decryption may be surprising (especially if 1Password requires biometric/PIN)
+- Large files decoded into buffer memory in plaintext
+- Harder to audit (magic happens invisibly)
+- =age.el= requires =age-default-identity= to be a file path --- ties back to temp file problem (2A/2B)
+
+*Windows:* Works in principle; =file-name-handler-alist= is platform-agnostic. However, =age.el= itself may have untested Windows quirks (binary paths, line endings). The temp file fallback (2A → 2B on Windows) means the key lands on disk, which is a significant downgrade.
+
+--------------
+
+*** 3D. Minor mode: =1password-rage-mode=
+A buffer-local minor mode that can be toggled. When enabled on a =.age= file's decrypted buffer:
+
+- Marks the buffer as having a "live" encrypted backing file
+- On =before-save-hook=, re-encrypts back to the =.age= file
+- On =kill-buffer-hook=, warns if unsaved
+
+#+begin_src elisp
+(define-minor-mode 1password-rage-mode
+  "Decrypt/re-encrypt buffer contents via rage and 1Password."
+  :lighter " 1P-rage"
+  ...)
+#+end_src
+
+*Pros:*
+
+- User has explicit control (opt-in per buffer)
+- Can be combined with auto-activation via =find-file-hook= on =.age= extensions
+- Lighter weight than a full file handler --- no need to handle every file operation
+- Works well alongside =auto-mode-alist= + =find-file-hook=
+
+*Cons:*
+
+- Still needs to handle the key-delivery problem (see Part 2)
+- Re-encryption on save is tricky if the recipient is different from the identity
+- Must carefully manage buffer state (modified flag, backup files, auto-save)
+
+*Windows:* Fully works. Minor modes are pure Emacs Lisp. The key delivery concern maps to whichever Part 2 approach is chosen --- on Windows, that defaults to 2C (stdin pipe) for best security since 2A degrades to disk.
+
+--------------
+
+*** 3E. =age.el= integration
+See *Part 5* for a deep-dive into every specific age.el integration point. Short summary: age.el exposes =age-start-decrypt=, =age-start-encrypt=, =age-file-insert-file-contents=, and =age-file-write-region= as the key seams. We advise =age-start-decrypt= for the cleanest decryption hook, and set =age-default-recipient= to a raw key string for zero-temp-file encryption.
+
+*Pros:*
+
+- Reuses all of =age.el='s infrastructure (file handler, buffer management, error handling, org-roam support, TRAMP support, passphrase mode detection)
+- Transparent to the user once configured --- =C-x C-f foo.age= just works
+- Minimal new code
+
+*Cons:*
+
+- Identity (=age-default-identity=) must be a file path --- temp file required for decryption
+- Coupling to =age.el= internals (though the advice targets stable public functions)
+- =aio=-based key retrieval must be blocked with =aio-wait-for= inside a sync hook
+
+*Windows:* Works, but decryption temp file lands on =%TEMP%= (on disk). See Part 5 for per-integration-point Windows notes.
+
+--------------
+
+*** 3F. Bypassing =age.el= entirely --- direct rage subprocess
+Call rage directly as a subprocess, piping the key via stdin (approach 2C). No =age.el= dependency. Decrypted content is read from rage's stdout directly into an Emacs buffer.
+
+#+begin_src elisp
+(aio-defun 1password-rage--decrypt-to-buffer (encrypted-file identity-key)
+  (let* ((output-buffer (generate-new-buffer "*rage-decrypted*"))
+         (proc (make-process
+                :name "rage"
+                :buffer output-buffer
+                :command `("rage" "-d" "-i" "-" ,encrypted-file)
+                :sentinel (lambda (p e) ...))))
+    (process-send-string proc identity-key)
+    (process-send-eof proc)
+    output-buffer))
+#+end_src
+
+*Pros:*
+
+- *No temp files* --- cleanest security model
+- No =age.el= dependency (reduces package requirements)
+- Full control over the process lifecycle
+- Output goes directly into Emacs buffer (decrypted plaintext never on disk unless user saves)
+
+*Cons:*
+
+- Must reimplement file-handler, save logic, mode detection, etc. that =age.el= provides
+- More code to maintain
+- Need to handle rage binary location, error codes, stderr separately
+
+*Windows:* Fully works and is actually the *best Windows option*. =make-process= with stdin piping (2C) works on Windows, rage is available via Scoop, and no temp files are needed. Use =executable-find "rage"= which respects =exec-path= on all platforms.
+
+--------------
+
+--------------
+
+** Part 5: Deep Dive --- Integrating with age.el
+=age.el= (=anticomputer/age.el=) is the de-facto Emacs age file handler, modelled directly on EasyPG. Users who already have it set up get transparent =C-x C-f foo.age= open/edit/save, org-roam support, TRAMP support, and passphrase mode detection for free. This section catalogues every seam where =1password-age.el= can hook in, with concrete code and honest tradeoffs.
+
+*** Understanding age.el's internals
+The key variables:
+
+#+begin_example
+age-default-identity   — file path (or list of file paths) to private key(s)
+age-default-recipient  — file path, raw key string, OR list mixing both
+age-always-use-default-keys — if t, skip "Use default keys?" prompt (set to t for automation)
+age-program            — path to rage/age binary (e.g. "rage")
+#+end_example
+
+*Critical asymmetry*: =age-default-identity= is *always* passed to rage as =-i <path>= via =expand-file-name= --- raw key strings are never accepted. =age-default-recipient= *can* be a raw public key string, passed as =-r <key>= instead of =-R <file>=. This means:
+
+- *Encryption*: no temp file needed --- set =age-default-recipient= to the raw public key string
+- *Decryption*: always needs a temp file, because =age-default-identity= must be a path
+
+The call chain for transparent file open:
+
+#+begin_example
+find-file  →  age-file-handler  →  age-file-insert-file-contents
+           →  age-start-decrypt  →  age--start  →  rage subprocess
+#+end_example
+
+The call chain for save:
+
+#+begin_example
+save-buffer  →  age-file-handler  →  age-file-write-region
+             →  age-start-encrypt  →  age--start  →  rage subprocess
+#+end_example
+
+--------------
+
+*** Integration Point A: =cl-letf= dynamic binding (already in codebase)
+The pattern already used in =1password-age-encrypt-file= and =1password-age-decrypt-file=. Dynamically rebind =age-default-identity= or =age-default-recipient= for the duration of a single operation, then let it revert. This is the most surgical and composable approach.
+
+#+begin_src elisp
+;; Decryption: retrieve key → temp file → cl-letf → age.el does its work → cleanup
+(aio-defun 1password-age-find-file (encrypted-file)
+  "Open ENCRYPTED-FILE, pulling the identity key from 1Password."
+  (interactive "fAge file: ")
+  (let* ((key (aio-await (1password-age--get-private-key 1password-age-identity-item)))
+         (temp (1password-age--write-key-to-temp-file key "1p-identity-")))
+    (unwind-protect
+        (cl-letf (((symbol-value 'age-default-identity) temp)
+                  ((symbol-value 'age-always-use-default-keys) t))
+          (find-file encrypted-file))
+      (1password-age--secure-delete-file temp))))
+
+;; Encryption: public key is a raw string — NO temp file needed
+(aio-defun 1password-age-save-buffer-to-age ()
+  "Save current buffer, encrypting with the recipient from 1Password."
+  (interactive)
+  (let* ((pubkey (aio-await (1password-age--get-public-key 1password-age-recipient-item))))
+    (cl-letf (((symbol-value 'age-default-recipient) pubkey)
+              ((symbol-value 'age-always-use-default-keys) t))
+      (save-buffer))))
+#+end_src
+
+*Pros:*
+
+- Scoped --- does not permanently mutate global state
+- Encryption requires no temp file at all
+- Already the established pattern in the codebase
+- Works with any code path inside the =cl-letf= scope (find-file, save-buffer, etc.)
+
+*Cons:*
+
+- Decryption still requires a temp file (unavoidable with age.el)
+- The =find-file= call inside =cl-letf= triggers age.el synchronously --- the async =aio-await= for key retrieval must complete before entering the scope, which means a blocking call to =aio-wait-for= if used from a non-async context
+- Does not automatically activate on every =.age= file open --- user must call =1password-age-find-file= explicitly
+
+--------------
+
+*** Integration Point B: Advice on =age-start-decrypt=
+=age-start-decrypt= is the function that resolves =age-default-identity= into =-i= flags and launches the rage subprocess. Advising it =:around= lets us inject a temp identity file for every decryption age.el performs, transparently.
+
+#+begin_src elisp
+(defun 1password-age--around-start-decrypt (orig-fn context cipher)
+  "Advice: fetch identity from 1Password before age-start-decrypt."
+  (if (not 1password-age-identity-item)
+      (funcall orig-fn context cipher)  ; no 1password config, fall through normally
+    (let* ((key (aio-wait-for (1password-age--get-private-key 1password-age-identity-item)))
+           (temp (1password-age--write-key-to-temp-file key "1p-identity-")))
+      (unwind-protect
+          (cl-letf (((symbol-value 'age-default-identity) temp)
+                    ((symbol-value 'age-always-use-default-keys) t))
+            (funcall orig-fn context cipher))
+        (1password-age--secure-delete-file temp)))))
+
+(defun 1password-age-install-age-decrypt-advice ()
+  "Hook 1Password key retrieval into age.el decryption."
+  (interactive)
+  (advice-add 'age-start-decrypt :around #'1password-age--around-start-decrypt))
+
+(defun 1password-age-remove-age-decrypt-advice ()
+  "Remove 1Password key retrieval from age.el decryption."
+  (interactive)
+  (advice-remove 'age-start-decrypt #'1password-age--around-start-decrypt))
+#+end_src
+
+*Pros:*
+
+- *Fully transparent* --- every =C-x C-f foo.age= automatically uses the 1Password key
+- No need to call special commands; age.el's file handler drives everything
+- Works with org-roam, TRAMP, authinfo.age, and any other age.el consumer
+- Conditional on =1password-age-identity-item= being set --- opt-in, not forced
+
+*Cons:*
+
+- =aio-wait-for= blocks the Emacs event loop during key retrieval (typically < 1s, but perceptible if 1Password requires biometric confirmation)
+- Advising =age-start-decrypt= means it fires for ALL decryptions, even those where the user wanted to use a local key --- need a guard condition or a way to opt out per-buffer
+- Temp file still required (age.el constraint)
+- If =age-start-decrypt= is renamed or refactored in a future age.el version, the advice breaks
+
+--------------
+
+*** Integration Point C: Advice on =age-start-encrypt=
+Mirror of B, for encryption. Since =age-default-recipient= accepts raw strings, this is cleaner --- no temp file needed.
+
+#+begin_src elisp
+(defun 1password-age--around-start-encrypt (orig-fn context plain recipients)
+  "Advice: fetch recipient public key from 1Password before age-start-encrypt."
+  (if (not 1password-age-recipient-item)
+      (funcall orig-fn context plain recipients)
+    (let* ((pubkey (aio-wait-for (1password-age--get-public-key 1password-age-recipient-item))))
+      (cl-letf (((symbol-value 'age-default-recipient) pubkey)
+                ((symbol-value 'age-always-use-default-keys) t))
+        (funcall orig-fn context plain recipients)))))
+#+end_src
+
+*Pros:*
+
+- *No temp file* --- public key is passed as a raw =-r= string to rage
+- Encryption is fully transparent: =save-buffer= on any =.age= file just works
+- The raw public key (=age1...= or =ssh-ed25519 ...=) is safe to hold in Emacs memory
+
+*Cons:*
+
+- Same =aio-wait-for= blocking concern as B (though key retrieval for public keys is faster)
+- Fires for all encryptions --- need a guard if user has files encrypted to different recipients
+
+--------------
+
+*** Integration Point D: Per-file-name advice via =age-file-insert-file-contents=
+=age-file-insert-file-contents= is called for every =.age= file open. You can advise it to check the filename and apply per-file or per-directory identity selection:
+
+#+begin_src elisp
+(defun 1password-age--around-insert-file-contents (orig-fn file &rest args)
+  "Advice: select 1Password identity based on FILE path."
+  (let* ((item-id (1password-age--item-for-file file))  ; custom lookup by path/dir
+         (key     (when item-id
+                    (aio-wait-for (1password-age--get-private-key item-id))))
+         (temp    (when key
+                    (1password-age--write-key-to-temp-file key "1p-identity-"))))
+    (unwind-protect
+        (cl-letf (((symbol-value 'age-default-identity) (or temp age-default-identity))
+                  ((symbol-value 'age-always-use-default-keys) (if temp t age-always-use-default-keys)))
+          (apply orig-fn file args))
+      (when temp
+        (1password-age--secure-delete-file temp)))))
+#+end_src
+
+Where =1password-age--item-for-file= could consult an alist:
+
+#+begin_src elisp
+(defcustom 1password-age-file-identity-alist nil
+  "Alist of (FILE-REGEXP . 1PASSWORD-ITEM-ID) for per-file identity selection.
+E.g.: '((\"~/work/.*\\.age\\'\" . \"item-id-work-key\")
+         (\"~/personal/.*\\.age\\'\" . \"item-id-personal-key\"))"
+  :type '(alist :key-type regexp :value-type string)
+  :group '1password-age)
+#+end_src
+
+*Pros:*
+
+- Per-file or per-directory key selection without global state mutation
+- Multiple 1Password items can be mapped to different file trees
+- Graceful fallback to =age-default-identity= if no mapping matches
+
+*Cons:*
+
+- More configuration required from the user
+- Regex alist maintenance burden
+- Still requires a temp file per decryption
+
+--------------
+
+*** Integration Point E: =age-file-find-file-hook=
+age.el registers =age-file-find-file-hook= on =find-file-hook=. You can add your own hook that runs *before* age.el's hook to pre-populate a temp identity file:
+
+#+begin_src elisp
+(defun 1password-age--pre-find-file-hook ()
+  "Pre-populate age-default-identity from 1Password for .age files."
+  (when (and buffer-file-name
+             (string-match-p "\\.age\\'" buffer-file-name)
+             1password-age-identity-item
+             (not 1password-age--active-temp-identity))
+    (let* ((key (aio-wait-for (1password-age--get-private-key 1password-age-identity-item)))
+           (temp (1password-age--write-key-to-temp-file key "1p-identity-")))
+      (setq 1password-age--active-temp-identity temp)
+      (setq age-default-identity temp))))
+
+;; Hook ordering matters: run before age-file-find-file-hook
+(add-hook 'find-file-hook #'1password-age--pre-find-file-hook -10)
+#+end_src
+
+*Pros:*
+
+- Simple to implement
+- Works with the existing =find-file-hook= machinery
+
+*Cons:*
+
+- Hook ordering is fragile --- must run before =age-file-find-file-hook= which is at depth 0
+- Mutates =age-default-identity= globally for the session (not scoped to the buffer)
+- Cleanup is unclear --- when do you delete the temp file and reset =age-default-identity=?
+- Not suitable if the user opens multiple =.age= files with different keys in one session
+- Advising =age-start-decrypt= (Integration Point B) is strictly superior
+
+--------------
+
+*** Integration Point F: Passphrase callback
+age.el supports a =passphrase-callback= on the context object (=age-context-passphrase-callback=), used for passphrase-encrypted age files. This is a different code path from identity-based decryption, but for completeness: if the age key itself is stored as a passphrase-encrypted age file in 1Password (e.g. a =key.age= document), you could supply the passphrase via the callback rather than the identity.
+
+This is niche but enables the "disaster recovery key" pattern: the private key is stored passphrase-encrypted in 1Password; the passphrase is retrieved from a separate 1Password field.
+
+#+begin_src elisp
+(defun 1password-age--make-passphrase-callback (item-id field)
+  "Return an age passphrase callback that retrieves from 1Password ITEM-ID FIELD."
+  (list (lambda (_key-id)
+          (aio-wait-for (1password--read item-id field
+                                        (1password--find-vault item-id))))
+        nil))
+#+end_src
+
+This is used with =age-context-set-passphrase-callback= before calling =age-start-decrypt=.
+
+--------------
+
+*** Integration Point G: =age-program= --- swap in a wrapper script
+
+#+begin_quote
+*Not a good Emacs enhancement.* Documented here for completeness.
+#+end_quote
+
+Set =age-program= to a shell wrapper that injects the key. This escapes the Emacs world entirely --- the wrapper lives on disk, is shell-specific, cannot be configured via =M-x customize=, does not compose with Emacs's extension mechanisms, and is invisible to other packages. It is included here only because it technically works.
+
+#+begin_src sh
+#!/bin/sh
+KEY=$(op read "op://Private/rage-identity/password" --no-newline)
+printf '%s' "$KEY" | exec rage -i - "$@"
+#+end_src
+
+The only scenario where this has merit: a user who refuses to touch their Emacs config at all and just wants something that works at the shell level. For anyone writing or using this package as an Emacs package, use Points B + C instead.
+
+--------------
+
+*** Integration Point H: Global minor mode wrapping B + C
+The most idiomatic Emacs way to package optional behaviour is a minor mode. A =1password-age-mode= global minor mode installs the B + C advice when enabled and removes it cleanly when disabled. This follows the same pattern as =auto-revert-mode=, =global-flycheck-mode=, =company-mode=, etc.
+
+#+begin_src elisp
+;;;###autoload
+(define-minor-mode 1password-age-mode
+  "Transparently integrate 1Password key retrieval with age.el.
+
+When enabled, decryption fetches the private key from 1Password and
+writes it to a temporary file in `1password-age-temp-directory'.
+Encryption fetches the public key as a raw string — no temp file needed.
+
+Requires `1password-age-identity-item' and `1password-age-recipient-item'
+to be configured."
+  :global t
+  :lighter " 1P-age"
+  :group '1password-age
+  (if 1password-age-mode
+      (progn
+        (unless (featurep 'age)
+          (user-error "1password-age-mode requires age.el"))
+        (advice-add 'age-start-decrypt :around
+                    #'1password-age--around-start-decrypt)
+        (advice-add 'age-start-encrypt :around
+                    #'1password-age--around-start-encrypt)
+        (message "1password-age-mode enabled"))
+    (advice-remove 'age-start-decrypt #'1password-age--around-start-decrypt)
+    (advice-remove 'age-start-encrypt #'1password-age--around-start-encrypt)
+    (message "1password-age-mode disabled")))
+#+end_src
+
+=use-package= config becomes simply:
+
+#+begin_src elisp
+(use-package 1password-age
+  :after age
+  :custom
+  (1password-age-identity-item  "your-item-id")
+  (1password-age-recipient-item "your-item-id")
+  (age-always-use-default-keys t)
+  :config
+  (1password-age-mode 1))
+#+end_src
+
+*Pros:*
+
+- The canonical Emacs pattern for optional, toggleable behaviour
+- =M-x 1password-age-mode= to toggle on/off without restarting Emacs
+- Participates in =M-x customize= (=:group '1password-age=)
+- Clean activation/deactivation --- no advice left dangling if disabled
+- Lighter in the mode line signals clearly that the mode is active
+
+*Cons:*
+
+- Global --- affects all =.age= file operations in the session. Use point D's alist pattern alongside it if per-directory key selection is needed.
+
+--------------
+
+*** Integration Point I: =dir-locals= for per-directory key selection
+Emacs's =dir-locals.el= mechanism allows per-directory buffer-local variable overrides. Because the B + C advice reads =1password-age-identity-item= and =1password-age-recipient-item=, simply making those variables =safe-local-variable= enables per-directory key selection with zero new code --- the user just writes a =.dir-locals.el=:
+
+#+begin_src elisp
+;; In ~/work/secrets/.dir-locals.el
+((nil . ((1password-age-identity-item  . "work-key-item-id")
+         (1password-age-recipient-item . "work-key-item-id"))))
+
+;; In ~/personal/.dir-locals.el
+((nil . ((1password-age-identity-item  . "personal-key-item-id")
+         (1password-age-recipient-item . "personal-key-item-id"))))
+#+end_src
+
+For this to work, the variables must be declared =safe-local-variable=:
+
+#+begin_src elisp
+(put '1password-age-identity-item  'safe-local-variable #'stringp)
+(put '1password-age-recipient-item 'safe-local-variable #'stringp)
+#+end_src
+
+Or declared with =:safe #'stringp= in their =defcustom=.
+
+*Pros:*
+
+- *Zero new code* beyond the =safe-local-variable= declaration
+- The most idiomatic Emacs approach to per-directory configuration --- same mechanism as =eglot=, =flycheck=, =projectile=, etc. use for per-project settings
+- Works automatically with org-roam vaults, project directories, TRAMP paths
+- User already knows how to use =.dir-locals.el= if they use any other package
+
+*Cons:*
+
+- Emacs prompts the user to approve dir-locals on first visit to a directory --- acceptable for trusted project dirs, slightly annoying for one-off files
+- Variables must be strings (item IDs); the user needs to know the 1Password item ID
+
+--------------
+
+*** Recommended age.el Integration Strategy
+*Idiomatic rating for each integration point:*
+
+| Point | Mechanism                                         | Idiomatic?            | Notes                                                      |
+|-------+---------------------------------------------------+-----------------------+------------------------------------------------------------|
+| A     | =cl-letf= dynamic binding                         | ✅ Internal primitive | Use as implementation detail inside B/C/H, not as user API |
+| B     | Advice on =age-start-decrypt=                     | ✅✅                  | The right seam for transparent decryption                  |
+| C     | Advice on =age-start-encrypt=                     | ✅✅                  | No temp file; the right seam for transparent encryption    |
+| D     | Advice on =age-file-insert-file-contents= + alist | ✅ Advanced           | Good for explicit per-file-pattern key routing             |
+| E     | =find-file-hook= pre-population                   | ❌ Avoid              | Mutates global state, ordering-fragile, no cleanup         |
+| F     | Passphrase callback                               | ✅ Niche              | Correct use of age.el's own extension point                |
+| G     | =age-program= wrapper script                      | ❌ Not Emacs          | External script, bypasses all Emacs extension mechanisms   |
+| H     | Global minor mode wrapping B + C                  | ✅✅ Best             | Canonical Emacs pattern; toggleable, customizable          |
+| I     | =dir-locals= + =safe-local-variable=              | ✅✅ Best             | Zero new code; idiomatic per-directory config              |
+
+*Recommended combination for a first-class Emacs package:*
+
+1. *H* (=1password-age-mode=) as the primary activation mechanism --- one line in =use-package=
+2. *I* (=dir-locals=) for per-directory key selection --- zero additional code, declare vars safe
+3. *C* inside H ensures encryption never needs a temp file
+4. *B* inside H handles decryption with a =/dev/shm= temp file (unavoidable with age.el)
+5. *F* as an opt-in for users with passphrase-protected identity files
+
+This gives a =use-package= config as clean as:
+
+#+begin_src elisp
+(use-package 1password-age
+  :after age
+  :custom
+  (1password-age-identity-item  "your-item-id")
+  (1password-age-recipient-item "your-item-id")
+  :config
+  (1password-age-mode 1))
+#+end_src
+
+--------------
+
+** Part 4: Security & Platform Compatibility Summary
+| Approach               | Key on disk       | Key in Emacs memory | Linux         | macOS                | Windows                                         |
+|------------------------+-------------------+---------------------+---------------+----------------------+-------------------------------------------------|
+| 2A: /dev/shm temp file | Briefly (RAM)     | Yes                 | ✅ RAM-backed | ⚠️ Falls back to disk | ❌ Always disk, no permission hardening         |
+| 2B: /tmp temp file     | Yes (disk)        | Yes                 | ⚠️ Disk        | ⚠️ Disk               | ⚠️ Disk                                          |
+| 2C: stdin pipe         | *No*              | Yes                 | ✅            | ✅                   | ✅                                              |
+| 2D: FIFO / Named Pipe  | No (inode/kernel) | Yes                 | ✅ mkfifo     | ✅ mkfifo            | ⚠️ PowerShell Named Pipe (key leaks to cmd line) |
+| 2E: env var            | No (but /proc)    | No                  | ❌ /proc leak | ⚠️                    | ⚠️ WMI leak                                      |
+
+The key *always* passes through 1Password's CLI process memory and the OS kernel pipe buffer. No approach can avoid that. The question is whether it also lands on disk.
+
+*Important*: =aio-await= and Emacs's async model mean the key string lives in Emacs's heap for the duration of the operation regardless of approach. Emacs does not support secure memory zeroing, so this is an accepted tradeoff.
+
+--------------
+
+** Recommended Implementation Plan
+*** Phase 1: Stdin pipe decryption (most secure, no temp file)
+Add a new code path to =1password-age.el= that:
+
+1. Detects if the item is a native age key (vs SSH key) based on category / field content
+2. Retrieves the key via =1password--read=
+3. Launches =rage -d -i - -o <output> <input>= as an async process
+4. Pipes the key to stdin and sends EOF
+5. Awaits process completion and handles errors
+
+This replaces the temp-file path for native age keys while keeping the SSH key path intact.
+
+*** Phase 2: Native age key storage support
+Add support for storing/retrieving native age keys from 1Password:
+
+- New customizable =1password-age-key-category= (default: ="Password"=)
+- New =1password-age--get-age-key= function that handles Password/Secure Note items
+- New =1password-age-select-age-identity= interactive command
+- Filter item list to show age-key items (detect by field label =age_identity= or by item tag)
+
+*** Phase 3: Optional auto-decrypt integration
+Provide an opt-in =1password-rage-auto-mode= that:
+
+- Activates on =.age= files via =auto-mode-alist=
+- On =find-file=, decrypts into the buffer using stdin pipe approach
+- On =before-save-hook=, re-encrypts using configured recipient
+- Warns the user before writing plaintext to disk
+
+*** Phase 4: =age.el= hook integration
+For users who already use =age.el='s file handler, provide:
+
+- =1password-age-install-age-hook= --- registers a pre-decrypt hook that temporarily writes the key to =/dev/shm= and sets =age-default-identity=
+- =1password-age-uninstall-age-hook= --- removes it
+
+This preserves backward compatibility with =age.el= workflows.
+
+--------------
+
+** Open Questions
+1. *Key tagging convention*: How should users tag/label 1Password items that contain age keys? Suggestion: a tag ="age-identity"= or a custom field named ="age_identity"=.
+
+2. *Recipient vs identity*: For encryption, the /public/ key must be known. Native age public keys (=age1...=) are safe to store plaintext --- even in a Login item's username field.
+
+3. *macOS support*: =/dev/shm= is absent. For approach 2A fallback, use a RAM disk created via =hdiutil= at startup? Or just always use stdin piping (2C) on macOS?
+
+4. *Multiple identities*: rage supports =-i= multiple times. For a multi-identity setup, stdin piping only works for one key. A temp file approach would be required for multi-key scenarios, or a concatenated identity file written to =/dev/shm=.
+
+5. *=age.el= vs direct rage*: Should =1password-age.el= depend on =age.el= at all, or should it be standalone? Removing the dependency simplifies the stdin pipe approach at the cost of reimplementing file-handler behavior.
+
+6. *Windows binary detection*: Should the code look for =rage= or =rage.exe=? Emacs's =executable-find= handles this transparently on Windows, but =1password-executable= uses an explicit =op.exe= check on =windows-nt=. A similar =1password-age-executable= customvar should be added for rage, defaulting to ="rage.exe"= on Windows and ="rage"= elsewhere.
+
+7. *Windows and =set-file-modes=*: The existing =1password-age--make-temp-file= calls =set-file-modes= with =#o600=. On Windows this is silently ignored. Should we warn the user, attempt a =icacls=-based ACL restriction, or document it as a known limitation?
